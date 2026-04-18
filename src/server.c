@@ -128,6 +128,8 @@ void startServer(Axionet* server) {
         close(clientFd); // End request handling 
 
         free(request);
+
+        free(response->response);
         free(response);
     }
 

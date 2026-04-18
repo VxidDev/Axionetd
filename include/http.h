@@ -13,5 +13,6 @@ typedef struct AxioResponse {
 } AxioResponse;
 
 AxioRequest* parseRequest(char *buf);
+AxioResponse* initResponse(const char* str, const int status, const char* contentType);
 
 #endif // AXIONETD_REQUEST_H

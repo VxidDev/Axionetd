@@ -29,21 +29,15 @@ addRoute(server, "/", rootHandler);
 addRoute(server, "/hello", helloHandler);
 
 startServer(server);
+free(server);
 ````
 
 ## Route Handler Example
 
 ```c
-AxioResponse* rootHandler(AxioRequest* request) {
-    AxioResponse* response = malloc(sizeof(AxioResponse));
-
-    response->response =
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Hello, world!";
-
-    return response;
+AxioResponse* root(AxioRequest* request) {
+    AxioResponse* resp = initResponse("<h1>Hello, World!</h1>", 200, "text/html");
+    return resp; 
 }
 ```
 
