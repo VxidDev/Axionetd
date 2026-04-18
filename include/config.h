@@ -1,0 +1,7 @@
+#ifndef AXIO_CONFIG_H
+#define AXIO_CONFIG_H
+
+#define AXIO_MAX_PATH 2048
+#define AXIO_MAX_METHOD 8
+
+#endif // AXIO_CONFIG_H
