@@ -6,8 +6,10 @@
 #include <asm-generic/socket.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/epoll.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -17,8 +19,11 @@
 #include <stdio.h>
 
 Axionet* globalServer = NULL;
+bool enableLogging = true;
 
-Axionet* initServer(const int port, const int backlog) {
+Axionet* initServer(const int port, const int backlog, const bool logging) {
+    enableLogging = logging;
+
     int serverFd = socket(AF_INET, SOCK_STREAM, 0); // Initialize socket
 
     if (serverFd == -1) { // Error while initializing socket
@@ -67,7 +72,11 @@ Axionet* initServer(const int port, const int backlog) {
 }
 
 void stopServer(int sig) {
-    globalServer->isRunning = false;
+    (void)sig;
+
+    if (globalServer) {
+        globalServer->isRunning = false;
+    }
 }
 
 void startServer(Axionet* server) {
@@ -81,56 +90,99 @@ void startServer(Axionet* server) {
 
     sigaction(SIGINT, &sa, NULL);
 
+    int epollFd = epoll_create1(0);
+
+    if (epollFd == -1) return;
+
+    fcntl(server->fd, F_SETFL, O_NONBLOCK);
+
     if (listen(server->fd, server->backlog) == -1) { // Prepare accepting connect and handle error
         return;
     }
 
     server->isRunning = true;
-    
-    while (server->isRunning) { // Event loop
-        int clientFd = accept(server->fd, NULL, NULL); // Wait for connection
 
-        if (clientFd == -1) {
-            if (!server->isRunning) break;
-            continue;
-        }
+    struct epoll_event ev = {0};
+    ev.events = EPOLLIN;
+    ev.data.fd = server->fd;
 
-        char buffer[1024]; // Buffer for request reading
+    epoll_ctl(epollFd, EPOLL_CTL_ADD, server->fd, &ev);
 
-        ssize_t n = read(clientFd, buffer, sizeof(buffer) - 1); // Read request into buffer 
-
-        if (n <= 0) {
-            close(clientFd);
-            continue;
-        }
-
-        buffer[n] = '\0';
+    struct epoll_event events[64];
         
-        AxioRequest* request = parseRequest(buffer);
+    while (server->isRunning) { // Event loop
+        int nready = epoll_wait(epollFd, events, 64, -1); // Wait for connection
 
-        printf("Method - %s | Route - %s\n", request->method , request->path);
+        for (int i = 0; i < nready; i++) {
+            int fd = events[i].data.fd;
 
-        AxioResponse* response = NULL;
+            if (fd == server->fd) { // New connection
+                int clientFd = accept(server->fd, NULL, NULL);
 
-        for (size_t i = 0; i < server->routeAmount; i++) {
-            if (strcmp(request->path, server->routes[i]->path) == 0) { // Look for matching path
-                response = server->routes[i]->handler(request); // Execute path and save response
-                break;
+                if (clientFd == -1) {
+                    if (!server->isRunning) break;
+                    continue;
+                }
+
+                fcntl(clientFd, F_SETFL, O_NONBLOCK);
+                
+                struct epoll_event cev = {0};
+                cev.events = EPOLLIN;
+                cev.data.fd = clientFd;
+
+                epoll_ctl(epollFd, EPOLL_CTL_ADD, clientFd, &cev);
+            } else { // Client request ready
+                char buffer[1024]; // Buffer for request reading
+
+                ssize_t n = read(fd, buffer, sizeof(buffer) - 1); // Read request into buffer 
+
+                if (n <= 0) {
+                    epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, NULL);
+                    close(fd);
+                    continue;
+                }
+
+                buffer[n] = '\0';
+                
+                AxioRequest* request = parseRequest(buffer);
+
+                if (enableLogging && request) {
+                    printf("Method - %s | Route - %s\n", request->method , request->path);
+                }
+
+                AxioResponse* response = NULL;
+
+                for (size_t i = 0; i < server->routeAmount; i++) {
+                    if (strcmp(request->path, server->routes[i]->path) == 0) { // Look for matching path
+                        response = server->routes[i]->handler(request); // Execute path and save response
+                        break;
+                    }
+                }
+
+                if (!response || !response->response) {
+                    if (response) free(response);
+                    response = route404();
+                }
+
+                // Write response
+                size_t total = strlen(response->response);
+                size_t sent = 0;
+
+                while (sent < total) {
+                    ssize_t w = write(fd, response->response + sent, total - sent);
+                    if (w <= 0) break;
+                    sent += w;
+                }
+                
+                // End request handling
+                epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, NULL); 
+                close(fd);
+
+                free(request);
+                free(response->response);
+                free(response);
             }
         }
-
-        if (!response || !response->response) {
-            if (response) free(response);
-            response = route404();
-        }
-
-        write(clientFd, response->response, strlen(response->response)); // Write response
-        close(clientFd); // End request handling 
-
-        free(request);
-
-        free(response->response);
-        free(response);
     }
 
     for (size_t i = 0; i < server->routeAmount; i++) {
@@ -139,4 +191,5 @@ void startServer(Axionet* server) {
 
     free(server->routes);
     close(server->fd);
+    close(epollFd);
 }

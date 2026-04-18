@@ -2,16 +2,17 @@
 #include "include/http.h"
 #include "include/router.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 AxioResponse* root(AxioRequest* request) {
-    AxioResponse* resp = initResponse("<h1>Hello, World!</h1>", 200, "text/html");
+    AxioResponse* resp = HTMLResponse("<h1>Hello, World!</h1>", 200);
     return resp; 
 }
 
 int main(void) {
-    Axionet* server = initServer(8000, 5);
+    Axionet* server = initServer(8000, 5, false);
 
     if (!server) {
         printf("Failed to create server.\n");

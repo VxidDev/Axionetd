@@ -85,3 +85,7 @@ AxioResponse* initResponse(const char* str, const int status, const char* conten
     resp->response = response;
     return resp;
 }
+
+AxioResponse* HTMLResponse(const char* str, const int status) {
+    return initResponse(str, status, "html/text");
+}

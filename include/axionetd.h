@@ -21,8 +21,9 @@ typedef struct Axionet {
 } Axionet;
 
 extern Axionet *globalServer;
+extern bool enableLogging;
 
-Axionet* initServer(const int port, const int backlog);
+Axionet* initServer(const int port, const int backlog, const bool logging);
 void startServer(Axionet* server);
 
 #endif // AXIONETD_H

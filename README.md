@@ -36,7 +36,7 @@ free(server);
 
 ```c
 AxioResponse* root(AxioRequest* request) {
-    AxioResponse* resp = initResponse("<h1>Hello, World!</h1>", 200, "text/html");
+    AxioResponse* resp = HTMLResponse("<h1>Hello, World!</h1>", 200);
     return resp; 
 }
 ```

@@ -14,5 +14,6 @@ typedef struct AxioResponse {
 
 AxioRequest* parseRequest(char *buf);
 AxioResponse* initResponse(const char* str, const int status, const char* contentType);
+AxioResponse* HTMLResponse(const char* str, const int status);
 
 #endif // AXIONETD_REQUEST_H
