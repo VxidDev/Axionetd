@@ -3,8 +3,9 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
-bool addRoute(Axionet *server, char *path, AxioResponse* (*handler)(AxioRequest *)) {
+bool addRoute(Axionet *server, char *path, char **methods, size_t amountOfMethods, AxioResponse* (*handler)(AxioRequest *)) {
     if (!server || !path || !handler) {
         return false;
     }
@@ -33,6 +34,14 @@ bool addRoute(Axionet *server, char *path, AxioResponse* (*handler)(AxioRequest 
         server->routes = temp;
         server->routeCapacity = newCap;
     }
+
+    memset(route->methods, 0, sizeof(route->methods));
+
+    for (size_t i = 0; i < amountOfMethods; i++) {
+        route->methods[i] = methods[i];
+    }
+
+    route->amountOfMethods = amountOfMethods;
 
     server->routes[server->routeAmount++] = route;
 

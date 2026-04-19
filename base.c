@@ -27,7 +27,7 @@ int main(void) {
         return 1;
     }
 
-    addRoute(server, "/", root);
+    addRoute(server, "/", (char*[]){}, 0, root);
 
     startServer(server);
     free(server);

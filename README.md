@@ -6,7 +6,7 @@ AxionetD is a lightweight HTTP server framework written in C. It provides a mini
 
 - Raw TCP-based HTTP server
 - Simple routing system (`path -> handler`)
-- Custom request parsing (method and path)
+- Custom request parsing (method, path and headers)
 - Dynamic response handling
 - SIGINT (Ctrl+C) graceful shutdown support
 - Minimal dependencies (POSIX sockets + standard C library)
@@ -23,13 +23,16 @@ src/         - Source files
 ## Example Usage
 
 ```c
-Axionet* server = initServer(8000, 10);
+Axionet* server = initServer("0.0.0.0", 8000, 8192, false);
 
-addRoute(server, "/", rootHandler);
-addRoute(server, "/hello", helloHandler);
+if (!server) {
+    printf("Failed to create server.\n");
+    return 1;
+}
+
+addRoute(server, "/", (char*[]){}, 0, root);
 
 startServer(server);
-free(server);
 ````
 
 ## Route Handler Example

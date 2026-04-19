@@ -4,5 +4,6 @@
 #define AXIO_MAX_PATH 2048
 #define AXIO_MAX_METHOD 8
 #define AXIO_MAX_HEADERS 32
+#define AXIO_MAX_METHODS 8
 
 #endif // AXIO_CONFIG_H

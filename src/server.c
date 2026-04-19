@@ -36,6 +36,19 @@ const char* statusCodeToText(int status) {
     }
 }
 
+bool isMethodAllowed(const AxioRoute *route, const char *method) {
+    if (!method || !route) return false;
+
+    // Empty array = allow all
+    if (!route->methods[0] || route->amountOfMethods == 0) return true;
+
+    for (size_t i = 0; i < route->amountOfMethods; i++) {
+        if (route->methods[i] && strcmp(route->methods[i], method) == 0) return true; 
+    }
+
+    return false;
+};
+
 void closeConnection(int epollFd, AxioConnection *conn) {
     epoll_ctl(epollFd, EPOLL_CTL_DEL, conn->fd, NULL);
     close(conn->fd);
@@ -213,6 +226,11 @@ void startServer(Axionet* server) {
 
                     for (size_t j = 0; j < server->routeAmount; j++) {
                         if (strcmp(request->path, server->routes[j]->path) == 0) {
+                            if (!isMethodAllowed(server->routes[j], request->method)) {
+                                response = route405();
+                                break;
+                            }
+
                             response = server->routes[j]->handler(request);
                             break;
                         }
