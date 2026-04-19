@@ -3,7 +3,7 @@
 #include "../include/router.h"
 #include "../include/defaultRoutes.h"
 
-#include <asm-generic/socket.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -20,6 +20,14 @@
 
 Axionet* globalServer = NULL;
 bool enableLogging = true;
+
+void closeConnection(int epollFd, AxioConnection *conn) {
+    epoll_ctl(epollFd, EPOLL_CTL_DEL, conn->fd, NULL);
+    close(conn->fd);
+
+    if (conn->response) free(conn->response);
+    free(conn);
+}
 
 Axionet* initServer(const int port, const int backlog, const bool logging) {
     enableLogging = logging;
@@ -82,6 +90,7 @@ void stopServer(int sig) {
 void startServer(Axionet* server) {
     globalServer = server;
 
+    // Handle CTRL + C
     struct sigaction sa = {0};
 
     sa.sa_handler = stopServer;
@@ -89,9 +98,9 @@ void startServer(Axionet* server) {
     sa.sa_flags = 0;
 
     sigaction(SIGINT, &sa, NULL);
+    //
 
     int epollFd = epoll_create1(0);
-
     if (epollFd == -1) return;
 
     fcntl(server->fd, F_SETFL, O_NONBLOCK);
@@ -114,82 +123,129 @@ void startServer(Axionet* server) {
         int nready = epoll_wait(epollFd, events, 64, -1); // Wait for connection
 
         for (int i = 0; i < nready; i++) {
-            int fd = events[i].data.fd;
+            // Server Socket
+            if (events[i].data.fd == server->fd) { // New connection
+                while (true) {
+                    int clientFd = accept(server->fd, NULL, NULL);
 
-            if (fd == server->fd) { // New connection
-                int clientFd = accept(server->fd, NULL, NULL);
+                    if (clientFd == -1) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                            break;
+                        else
+                            continue;
+                    }
 
-                if (clientFd == -1) {
-                    if (!server->isRunning) break;
-                    continue;
+                    fcntl(clientFd, F_SETFL, O_NONBLOCK);
+                    
+                    AxioConnection *conn = malloc(sizeof(AxioConnection));
+
+                    conn->fd = clientFd;
+                    conn->response = NULL;
+                    conn->total = 0;
+                    conn->sent = 0;
+
+                    struct epoll_event cev = {0};
+                    cev.events = EPOLLIN;
+                    cev.data.ptr = conn;
+
+                    epoll_ctl(epollFd, EPOLL_CTL_ADD, clientFd, &cev);
                 }
-
-                fcntl(clientFd, F_SETFL, O_NONBLOCK);
-                
-                struct epoll_event cev = {0};
-                cev.events = EPOLLIN;
-                cev.data.fd = clientFd;
-
-                epoll_ctl(epollFd, EPOLL_CTL_ADD, clientFd, &cev);
             } else { // Client request ready
-                char buffer[1024]; // Buffer for request reading
+                AxioConnection *conn = events[i].data.ptr;
 
-                ssize_t n = read(fd, buffer, sizeof(buffer) - 1); // Read request into buffer 
-
-                if (n <= 0) {
-                    epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, NULL);
-                    close(fd);
+                // Error / hangup
+                if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+                    closeConnection(epollFd, conn);
                     continue;
                 }
 
-                buffer[n] = '\0';
-                
-                AxioRequest* request = parseRequest(buffer);
+                // Read
+                if (events[i].events & EPOLLIN) {
+                    char buffer[1024];
 
-                if (enableLogging && request) {
-                    printf("Method - %s | Route - %s\n", request->method , request->path);
+                    ssize_t n = read(conn->fd, buffer, sizeof(buffer) - 1);
+
+                    if (n <= 0) {
+                        closeConnection(epollFd, conn);
+                        continue;
+                    }
+
+                    buffer[n] = '\0';
+
+                    AxioRequest* request = parseRequest(buffer);
+
+                    if (enableLogging && request) {
+                        printf("Method: %s | Path: %s\n", request->method, request->path);
+                    }
+
+                    AxioResponse* response = NULL;
+
+                    for (size_t j = 0; j < server->routeAmount; j++) {
+                        if (strcmp(request->path, server->routes[j]->path) == 0) {
+                            response = server->routes[j]->handler(request);
+                            break;
+                        }
+                    }
+
+                    if (!response || !response->response) {
+                        if (response) free(response);
+                        response = route404();
+                    }
+
+                    // Store response
+                    conn->response = response->response;
+                    conn->total = strlen(conn->response);
+                    conn->sent = 0;
+
+                    // Switch to write mode
+                    struct epoll_event wev = {0};
+                    wev.events = EPOLLOUT;
+                    wev.data.ptr = conn;
+
+                    epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
+
+                    // Cleanup request
+                    for (int k = 0; request->headers[k]; k++) {
+                        free(request->headers[k]);
+                    }
+
+                    free(request->headers);
+                    free(request);
+                    free(response); // Keep response->response
                 }
+                
+                // Write
+                if (events[i].events & EPOLLOUT) {
+                    while (conn->sent < conn->total) {
+                        ssize_t w = write(conn->fd, conn->response + conn->sent, conn->total - conn->sent);
 
-                AxioResponse* response = NULL;
+                        if (w > 0) {
+                            conn->sent += w;
+                        } else if (w == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                            break; // Wait for next EPOLLOUT
+                        } else {
+                            closeConnection(epollFd, conn);
+                            goto nextEvent;
+                        }
+                    }
 
-                for (size_t i = 0; i < server->routeAmount; i++) {
-                    if (strcmp(request->path, server->routes[i]->path) == 0) { // Look for matching path
-                        response = server->routes[i]->handler(request); // Execute path and save response
-                        break;
+                    if (conn->sent == conn->total) {
+                        closeConnection(epollFd, conn);
                     }
                 }
-
-                if (!response || !response->response) {
-                    if (response) free(response);
-                    response = route404();
-                }
-
-                // Write response
-                size_t total = strlen(response->response);
-                size_t sent = 0;
-
-                while (sent < total) {
-                    ssize_t w = write(fd, response->response + sent, total - sent);
-                    if (w <= 0) break;
-                    sent += w;
-                }
                 
-                // End request handling
-                epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, NULL); 
-                close(fd);
+                nextEvent:;
 
-                free(request);
-                free(response->response);
-                free(response);
+                }
             }
         }
-    }
 
-    for (size_t i = 0; i < server->routeAmount; i++) {
-        free(server->routes[i]);
-    }
+        // Cleanup
+        for (size_t i = 0; i < server->routeAmount; i++) {
+            free(server->routes[i]);
+        }
 
-    free(server->routes);
-    close(server->fd);
-    close(epollFd);
+        free(server->routes);
+        close(server->fd);
+        close(epollFd);
 }
