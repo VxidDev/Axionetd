@@ -36,52 +36,48 @@ bool _extract_path(char *request, char *buf, int limit) {
     return (i > 0);
 }
 
-AxioHeader** _extract_headers(char* request) {
-    char *headersStart = strstr(request, "\r\n");
-    if (!headersStart) return NULL;
+AxioHeader* _extract_headers(AxioRequest* request) {
+    char *p = strstr(request->raw, "\r\n");
+    if (!p) return NULL;
 
-    headersStart += 2; // skip "\r\n"
+    p += 2; // skip "\r\n"
 
-    AxioHeader** headers = malloc(sizeof(AxioHeader*) * AXIO_MAX_HEADERS);
+    char *end = strstr(p, "\r\n\r\n");
+    if (end) *end = '\0';
+
     int count = 0;
+    
+    while (*p && count < AXIO_MAX_HEADERS) {
+        char *line = p;
 
-    char *line = headersStart;
+        // Find end of line
+        while (*p && !(p[0] == '\r' && p[1] == '\n')) p++;
 
-    while (line && line[0] != '\0') {
-        char *next = strstr(line, "\r\n");
-        if (!next) break;
-
-        *next = '\0';
-
-        char* colon = strchr(line, ':');
-        if (colon) {
-            *colon = '\0';
-
-            AxioHeader* header = malloc(sizeof(AxioHeader));
-
-            header->key = line;
-            header->value = colon + 1;
-
-            headers[count++] = header;
+        if (*p) {
+            *p = '\0';
+            p += 2;
         }
 
-        line = next + 2;
+        // Find colon
+        char *colon = line;
+        while (*colon && *colon != ':') colon++;
+
+        if (*colon == ':') {
+            *colon = '\0';
+
+            char *value = colon + 1;
+            if (*value == ' ') value++;
+
+            request->headers[count].key = line;
+            request->headers[count].value = value;
+
+            count++;
+        } 
     }
-
-    if (count < AXIO_MAX_HEADERS) {
-        headers[count] = NULL; // null-terminate 
-    }
-
-    return headers;
-} 
-
-AxioHeader** AxioRequest_getHeaders(AxioRequest* request) {
-    if (!request->headers) {
-        request->headers = _extract_headers(request->raw);
-    }
-
+    
+    request->headerAmount = count; 
     return request->headers;
-}
+} 
 
 AxioRequest* parseRequest(char *buf) {
     AxioRequest* request = malloc(sizeof(AxioRequest)); // Allocate memory for request
@@ -100,69 +96,66 @@ AxioRequest* parseRequest(char *buf) {
         return NULL;
     }
 
-    /* For optimization purposes user should extract headers by using
-       AxioHeaders** AxioRequest_getHeaders(const AxioRequest* request)
+    // For optimization purposes user should extract headers by using
+    //   AxioHeaders** AxioRequest_getHeaders(const AxioRequest* request)
 
-    request->headers = _extract_headers(buf);
-
-    if (!request->headers) {
-        free(request);
-        return NULL;
-    }
-
-    */
-
-    request->headers = NULL;
     request->raw = buf;
+    _extract_headers(request); // fills in request->headers
+
+    //request->headers = NULL;
+    //request->raw = buf;
 
     return request;
 }
 
-AxioResponse* initResponse(const char* body, const int status, AxioHeader* headers, int headerCount) {
+AxioResponse* initResponse(const char* body, int status, AxioHeader* headers, int headerCount) {
     size_t bodyLen = strlen(body);
 
-    // Compute size needed
-    int needed = snprintf(NULL, 0,
-        "HTTP/1.1 %d\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: close\r\n",
-        status, bodyLen
-    );
+    // compute size manually 
+    size_t needed = 0;
 
-    // Add custom headers
+    // status line (estimate fixed format)
+    needed += 32; // "HTTP/1.1 200\r\n" + safety margin
+
+    needed += 22; // "Content-Length: %zu\r\n"
+    needed += 20; // "Connection: close\r\n"
+
     for (int i = 0; i < headerCount; i++) {
-        needed += snprintf(NULL, 0, "%s: %s\r\n", headers[i].key, headers[i].value);
+        needed += strlen(headers[i].key) + strlen(headers[i].value) + 4; // ": \r\n"
     }
 
-    // Final CRLF, body and a null-terminator
-    needed += snprintf(NULL, 0, "\r\n%s", body);
+    needed += 2; // "\r\n"
+    needed += bodyLen;
+    needed += 1; // null terminator
 
-    char *response = malloc(needed + 1);
+    char *response = malloc(needed);
     if (!response) return NULL;
 
-    int offset = 0;
+    char *p = response;
 
-    // Write status line
-    offset += snprintf(response + offset, needed + 1 - offset,
+    // write response 
+    p += sprintf(p,
         "HTTP/1.1 %d\r\n"
         "Content-Length: %zu\r\n"
         "Connection: close\r\n",
         status, bodyLen
     );
 
-    // Write headers
     for (int i = 0; i < headerCount; i++) {
-        offset += snprintf(response + offset, needed + 1 - offset,
-            "%s: %s\r\n",
+        p += sprintf(p, "%s: %s\r\n",
             headers[i].key,
             headers[i].value
         );
     }
 
-    // End headers & body
-    offset += snprintf(response + offset, needed + 1 - offset,
-        "\r\n%s", body 
-    );
+    p += sprintf(p, "\r\n");
+
+    if (bodyLen > 0) {
+        memcpy(p, body, bodyLen);
+        p += bodyLen;
+    }
+
+    *p = '\0';
 
     AxioResponse* resp = malloc(sizeof(AxioResponse));
 
@@ -172,7 +165,8 @@ AxioResponse* initResponse(const char* body, const int status, AxioHeader* heade
     }
 
     resp->response = response;
-    resp->len = offset;
+    resp->len = (size_t)(p - response);
+
     return resp;
 }
 

@@ -7,10 +7,8 @@
 #include <stdlib.h>
 
 AxioResponse* root(AxioRequest* request) {
-    AxioHeader** headers = AxioRequest_getHeaders(request);
-
-    for (int i = 0; headers[i]; i++) {
-        printf("%s: %s\n", headers[i]->key, headers[i]->value);
+    for (int i = 0; i < request->headerAmount; i++) {
+        printf("%s: %s\n", request->headers[i].key, request->headers[i].value);
     }
 
     AxioHeader contentType[] = {

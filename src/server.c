@@ -225,14 +225,6 @@ void startServer(Axionet* server) {
                     epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
 
                     // Cleanup request
-                    if (request->headers) {
-                        for (int k = 0; request->headers[k]; k++) {
-                            free(request->headers[k]);
-                        }
-
-                        free(request->headers);
-                    }
-                
                     free(request);
                     free(response); // Keep response->response
                 }
