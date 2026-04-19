@@ -75,6 +75,13 @@ AxioHeader** _extract_headers(char* request) {
     return headers;
 } 
 
+AxioHeader** AxioRequest_getHeaders(AxioRequest* request) {
+    if (!request->headers) {
+        request->headers = _extract_headers(request->raw);
+    }
+
+    return request->headers;
+}
 
 AxioRequest* parseRequest(char *buf) {
     AxioRequest* request = malloc(sizeof(AxioRequest)); // Allocate memory for request
@@ -93,12 +100,20 @@ AxioRequest* parseRequest(char *buf) {
         return NULL;
     }
 
+    /* For optimization purposes user should extract headers by using
+       AxioHeaders** AxioRequest_getHeaders(const AxioRequest* request)
+
     request->headers = _extract_headers(buf);
 
     if (!request->headers) {
         free(request);
         return NULL;
     }
+
+    */
+
+    request->headers = NULL;
+    request->raw = buf;
 
     return request;
 }

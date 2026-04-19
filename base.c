@@ -7,16 +7,22 @@
 #include <stdlib.h>
 
 AxioResponse* root(AxioRequest* request) {
-    AxioHeader headers[] = {
+    AxioHeader** headers = AxioRequest_getHeaders(request);
+
+    for (int i = 0; headers[i]; i++) {
+        printf("%s: %s\n", headers[i]->key, headers[i]->value);
+    }
+
+    AxioHeader contentType[] = {
         {"Content-Type", "text/html"}
     };
 
-    AxioResponse* resp = initResponse("<h1>Hello, World!</h1>", 200, headers, 1);
+    AxioResponse* resp = initResponse("<h1>Hello, World!</h1>", 200, contentType, 1);
     return resp; 
 }
 
 int main(void) {
-    Axionet* server = initServer(8000, 8192, false);
+    Axionet* server = initServer("0.0.0.0", 8000, 8192, false);
 
     if (!server) {
         printf("Failed to create server.\n");

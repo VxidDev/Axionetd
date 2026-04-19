@@ -7,6 +7,8 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
+#include <sys/types.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -29,7 +31,7 @@ void closeConnection(int epollFd, AxioConnection *conn) {
     free(conn);
 }
 
-Axionet* initServer(const int port, const int backlog, const bool logging) {
+Axionet* initServer(const char *host, const int port, const int backlog, const bool logging) {
     enableLogging = logging;
 
     int serverFd = socket(AF_INET, SOCK_STREAM, 0); // Initialize socket
@@ -38,19 +40,37 @@ Axionet* initServer(const int port, const int backlog, const bool logging) {
         return NULL;
     }
 
-    struct sockaddr_in addr = {0}; // Fill in address structure
+    struct addrinfo hints, *res = NULL;
 
-    addr.sin_family = AF_INET; // IPv4
-    addr.sin_port = htons(port); // Port
-    addr.sin_addr.s_addr = INADDR_ANY; // 0.0.0.0 for now.
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    char portStr[16];
+    snprintf(portStr, sizeof(portStr), "%d", port);
+
+    const char *bindHost = host;
+
+    if (!bindHost || strlen(bindHost) == 0) {
+        bindHost = NULL;
+    }
+
+    if (getaddrinfo(bindHost, portStr, &hints, &res) != 0 || !res) {
+        close(serverFd);
+        return NULL;
+    }
 
     int opt = 1;
     setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    if (bind(serverFd, (struct sockaddr*)&addr, sizeof(addr)) == -1) { // Bind address structure to socket and handle error
+    if (bind(serverFd, res->ai_addr, res->ai_addrlen) == -1) { // Bind address structure to socket and handle error
+        freeaddrinfo(res);
         close(serverFd); // Close socket
         return NULL;
     }
+
+    freeaddrinfo(res);
 
     Axionet* server = malloc(sizeof(Axionet)); // Allocate memory for server
 
@@ -205,11 +225,14 @@ void startServer(Axionet* server) {
                     epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
 
                     // Cleanup request
-                    for (int k = 0; request->headers[k]; k++) {
-                        free(request->headers[k]);
-                    }
+                    if (request->headers) {
+                        for (int k = 0; request->headers[k]; k++) {
+                            free(request->headers[k]);
+                        }
 
-                    free(request->headers);
+                        free(request->headers);
+                    }
+                
                     free(request);
                     free(response); // Keep response->response
                 }
