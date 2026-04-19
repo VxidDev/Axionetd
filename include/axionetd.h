@@ -11,6 +11,7 @@ typedef struct AxioRoute AxioRoute; // router.h
 typedef struct Axionet {
     int fd; // Listening socket
     int port;
+    char* host;
     
     unsigned long routeAmount;
     unsigned long routeCapacity;

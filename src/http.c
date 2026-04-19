@@ -166,6 +166,7 @@ AxioResponse* initResponse(const char* body, int status, AxioHeader* headers, in
 
     resp->response = response;
     resp->len = (size_t)(p - response);
+    resp->status = status;
 
     return resp;
 }

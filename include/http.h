@@ -18,13 +18,14 @@ typedef struct AxioRequest {
 } AxioRequest;
 
 typedef struct AxioResponse {
-    char *response; // HTTP String response
+    char *response; // HTTP String respons
+    int status;
     unsigned long len;
 } AxioResponse;
 
 typedef struct AxioConnection {
     int fd;
-
+    
     char *response;
     unsigned long total;
     unsigned long sent;

@@ -3,6 +3,8 @@
 #include "../include/router.h"
 #include "../include/defaultRoutes.h"
 
+#define _GNU_SOURCE
+
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -22,6 +24,17 @@
 
 Axionet* globalServer = NULL;
 bool enableLogging = true;
+
+const char* statusCodeToText(int status) {
+    switch (status / 100) {
+        case 1: return "\033[37mInformational";
+        case 2: return "\033[32mSuccess";
+        case 3: return "\033[33mRedirection";
+        case 4: return "\033[31mClient Error";
+        case 5: return "\033[35mServer Error";
+        default: return "\033[90mUnknown";
+    }
+}
 
 void closeConnection(int epollFd, AxioConnection *conn) {
     epoll_ctl(epollFd, EPOLL_CTL_DEL, conn->fd, NULL);
@@ -82,6 +95,7 @@ Axionet* initServer(const char *host, const int port, const int backlog, const b
     // Fill in server structure
     server->fd = serverFd;
     server->port = port;
+    server->host = strdup(bindHost ? bindHost : "0.0.0.0");
     server->backlog = backlog;
     server->isRunning = false;
 
@@ -138,15 +152,18 @@ void startServer(Axionet* server) {
     epoll_ctl(epollFd, EPOLL_CTL_ADD, server->fd, &ev);
 
     struct epoll_event events[64];
+
+    printf("\033[1;35mAxionetd: \033[33mServer is running on \033[36mhttp://%s:%d\033[0m\n", server->host, server->port);
         
     while (server->isRunning) { // Event loop
         int nready = epoll_wait(epollFd, events, 64, -1); // Wait for connection
+        if (nready <= 0) continue;
 
         for (int i = 0; i < nready; i++) {
             // Server Socket
             if (events[i].data.fd == server->fd) { // New connection
                 while (true) {
-                    int clientFd = accept(server->fd, NULL, NULL);
+                    int clientFd = accept4(server->fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
                     if (clientFd == -1) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -154,8 +171,6 @@ void startServer(Axionet* server) {
                         else
                             continue;
                     }
-
-                    fcntl(clientFd, F_SETFL, O_NONBLOCK);
                     
                     AxioConnection *conn = malloc(sizeof(AxioConnection));
 
@@ -194,10 +209,6 @@ void startServer(Axionet* server) {
 
                     AxioRequest* request = parseRequest(buffer);
 
-                    if (enableLogging && request) {
-                        printf("Method: %s | Path: %s\n", request->method, request->path);
-                    }
-
                     AxioResponse* response = NULL;
 
                     for (size_t j = 0; j < server->routeAmount; j++) {
@@ -210,6 +221,12 @@ void startServer(Axionet* server) {
                     if (!response || !response->response) {
                         if (response) free(response);
                         response = route404();
+                    }
+
+                    if (enableLogging && request) {
+                        printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
+                            request->method, request->path, response->status, statusCodeToText(response->status)
+                        );
                     }
 
                     // Store response
@@ -261,6 +278,7 @@ void startServer(Axionet* server) {
         }
 
         free(server->routes);
+        free(server->host);
         close(server->fd);
         close(epollFd);
 }
