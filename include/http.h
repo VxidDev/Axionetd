@@ -27,7 +27,7 @@ typedef struct AxioConnection {
 } AxioConnection;
 
 AxioRequest* parseRequest(char *buf);
-AxioResponse* initResponse(const char* str, const int status, const char* contentType);
-AxioResponse* HTMLResponse(const char* str, const int status);
+AxioResponse* initResponse(const char* body, const int status, AxioHeader* headers, int headerCount);
+AxioResponse* HTMLResponse(const char* body, const int status, AxioHeader* headers, int headerAmount);
 
 #endif // AXIONETD_REQUEST_H

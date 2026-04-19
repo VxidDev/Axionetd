@@ -2,6 +2,6 @@
 #include "../include/http.h"
 
 AxioResponse* route404() {
-    AxioResponse* resp = initResponse("<h1>404 Not Found</h1>", 404, "text/html");
+    AxioResponse* resp = HTMLResponse("<h1>404 Not Found</h1>", 404, NULL, 0);
     return resp; 
 }

@@ -103,28 +103,50 @@ AxioRequest* parseRequest(char *buf) {
     return request;
 }
 
-AxioResponse* initResponse(const char* str, const int status, const char* contentType) {
+AxioResponse* initResponse(const char* body, const int status, AxioHeader* headers, int headerCount) {
+    size_t bodyLen = strlen(body);
+
+    // Compute size needed
     int needed = snprintf(NULL, 0,
         "HTTP/1.1 %d\r\n"
-        "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "%s",
-        status, contentType, strlen(str), str
+        "Connection: close\r\n",
+        status, bodyLen
     );
+
+    // Add custom headers
+    for (int i = 0; i < headerCount; i++) {
+        needed += snprintf(NULL, 0, "%s: %s\r\n", headers[i].key, headers[i].value);
+    }
+
+    // Final CRLF, body and a null-terminator
+    needed += snprintf(NULL, 0, "\r\n%s", body);
 
     char *response = malloc(needed + 1);
     if (!response) return NULL;
 
-    snprintf(response, needed + 1,
+    int offset = 0;
+
+    // Write status line
+    offset += snprintf(response + offset, needed + 1 - offset,
         "HTTP/1.1 %d\r\n"
-        "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "%s",
-        status, contentType, strlen(str), str
+        "Connection: close\r\n",
+        status, bodyLen
+    );
+
+    // Write headers
+    for (int i = 0; i < headerCount; i++) {
+        offset += snprintf(response + offset, needed + 1 - offset,
+            "%s: %s\r\n",
+            headers[i].key,
+            headers[i].value
+        );
+    }
+
+    // End headers & body
+    offset += snprintf(response + offset, needed + 1 - offset,
+        "\r\n%s", body 
     );
 
     AxioResponse* resp = malloc(sizeof(AxioResponse));
@@ -135,10 +157,18 @@ AxioResponse* initResponse(const char* str, const int status, const char* conten
     }
 
     resp->response = response;
-    resp->len = needed;
+    resp->len = offset;
     return resp;
 }
 
-AxioResponse* HTMLResponse(const char* str, const int status) {
-    return initResponse(str, status, "text/html");
+AxioResponse* HTMLResponse(const char* body, const int status, AxioHeader* headers, int headerAmount) {
+    AxioHeader h[headerAmount + 1];
+
+    for (int i = 0; i < headerAmount; i++) {
+        h[i] = headers[i];
+    }
+
+    h[headerAmount] = (AxioHeader){"Content-Type", "text/html"};
+
+    return initResponse(body, status, h, headerAmount);
 }
