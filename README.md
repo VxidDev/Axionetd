@@ -38,9 +38,8 @@ startServer(server);
 ## Route Handler Example
 
 ```c
-AxioResponse* root(AxioRequest* request) {
-    AxioResponse* resp = HTMLResponse("<h1>Hello, World!</h1>", 200);
-    return resp; 
+void root(AxioRequest* request, AxioResponse* response) {
+    HTMLResponse(response, "<h1>Hello, World!</h1>", 200, NULL, 0);
 }
 ```
 

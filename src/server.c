@@ -2,6 +2,7 @@
 #include "../include/http.h"
 #include "../include/router.h"
 #include "../include/defaultRoutes.h"
+#include <asm-generic/errno.h>
 
 #define _GNU_SOURCE
 
@@ -54,6 +55,7 @@ void closeConnection(int epollFd, AxioConnection *conn) {
     close(conn->fd);
 
     if (conn->response) free(conn->response);
+    if (conn->readBuffer) free(conn->readBuffer);
     free(conn);
 }
 
@@ -159,7 +161,7 @@ void startServer(Axionet* server) {
     server->isRunning = true;
 
     struct epoll_event ev = {0};
-    ev.events = EPOLLIN;
+    ev.events = EPOLLIN | EPOLLET;
     ev.data.fd = server->fd;
 
     epoll_ctl(epollFd, EPOLL_CTL_ADD, server->fd, &ev);
@@ -191,112 +193,151 @@ void startServer(Axionet* server) {
                     conn->response = NULL;
                     conn->total = 0;
                     conn->sent = 0;
+                    conn->state = AXIO_READING;
 
                     struct epoll_event cev = {0};
-                    cev.events = EPOLLIN;
+                    cev.events = EPOLLIN | EPOLLET ;
                     cev.data.ptr = conn;
 
                     epoll_ctl(epollFd, EPOLL_CTL_ADD, clientFd, &cev);
                 }
-            } else { // Client request ready
-                AxioConnection *conn = events[i].data.ptr;
 
-                // Error / hangup
-                if (events[i].events & (EPOLLERR | EPOLLHUP)) {
-                    closeConnection(epollFd, conn);
-                    continue;
-                }
+                continue;
+            } 
+            // Client request ready
+            AxioConnection *conn = events[i].data.ptr;
 
-                // Read
-                if (events[i].events & EPOLLIN) {
-                    char buffer[1024];
+            // Error / hangup
+            if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+                closeConnection(epollFd, conn);
+                continue;
+            }
 
-                    ssize_t n = read(conn->fd, buffer, sizeof(buffer) - 1);
+            // Read
+            if (conn->state == AXIO_READING && (events[i].events & EPOLLIN)) {
+                size_t bufSize = 4096;
+                size_t total = 0;
 
-                    if (n <= 0) {
-                        closeConnection(epollFd, conn);
-                        continue;
+                char *buffer = malloc(bufSize);
+
+                while (1) {
+                    // grow if needed
+                    if (total >= bufSize - 1) {
+                        bufSize *= 2;
+                        char *tmp = realloc(buffer, bufSize);
+
+                        if (!tmp) {
+                            free(buffer);
+                            closeConnection(epollFd, conn);
+                            goto nextEvent;
+                        }
+
+                        buffer = tmp;
                     }
 
-                    buffer[n] = '\0';
+                    ssize_t n = read(conn->fd, buffer + total, bufSize - total - 1);
 
-                    AxioRequest* request = parseRequest(buffer);
+                    if (n < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break;
+                        }
 
-                    AxioResponse* response = NULL;
+                        closeConnection(epollFd, conn);
+                        goto nextEvent;
+                    }
 
+                    if (n == 0) break; // connection closed
+
+                    total += n;
+
+                    // optional: stop early if full HTTP request received
+                    if (strstr(buffer, "\r\n\r\n")) {
+                        break;
+                    }
+                }
+
+                buffer[total] = '\0';
+
+                conn->readBuffer = buffer;
+
+                AxioRequest request = {0};
+                AxioResponse response = {0};
+
+                if (!parseRequest(&request, buffer)) { // Fill in request or handle error 
+                    if (enableLogging) {
+                        printf("\033[1;31mERROR:\033[33m Malformed request. \033[0m\n");
+                    }
+
+                    route400(&response);
+                } else {
                     for (size_t j = 0; j < server->routeAmount; j++) {
-                        if (strcmp(request->path, server->routes[j]->path) == 0) {
-                            if (!isMethodAllowed(server->routes[j], request->method)) {
-                                response = route405();
+                        if (strcmp(request.path, server->routes[j]->path) == 0) {
+                            if (!isMethodAllowed(server->routes[j], request.method)) {
+                                route405(&response);
                                 break;
                             }
 
-                            response = server->routes[j]->handler(request);
+                            server->routes[j]->handler(&request, &response);
                             break;
                         }
                     }
 
-                    if (!response || !response->response) {
-                        if (response) free(response);
-                        response = route404();
+                    if (!response.response) {
+                        route404(&response);
                     }
-
-                    if (enableLogging && request) {
-                        printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
-                            request->method, request->path, response->status, statusCodeToText(response->status)
-                        );
-                    }
-
-                    // Store response
-                    conn->response = response->response;
-                    conn->total = strlen(conn->response);
-                    conn->sent = 0;
-
-                    // Switch to write mode
-                    struct epoll_event wev = {0};
-                    wev.events = EPOLLOUT;
-                    wev.data.ptr = conn;
-
-                    epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
-
-                    // Cleanup request
-                    free(request);
-                    free(response); // Keep response->response
                 }
-                
-                // Write
-                if (events[i].events & EPOLLOUT) {
-                    while (conn->sent < conn->total) {
-                        ssize_t w = write(conn->fd, conn->response + conn->sent, conn->total - conn->sent);
 
-                        if (w > 0) {
-                            conn->sent += w;
-                        } else if (w == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                            break; // Wait for next EPOLLOUT
-                        } else {
-                            closeConnection(epollFd, conn);
-                            goto nextEvent;
-                        }
-                    }
+                if (enableLogging) {
+                    printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
+                        request.method, request.path, response.status, statusCodeToText(response.status)
+                    );
+                }
 
-                    if (conn->sent == conn->total) {
+                // Store response
+                conn->response = response.response;
+                response.response = NULL;
+
+                conn->total = strlen(conn->response);
+                conn->sent = 0;
+                conn->state = AXIO_WRITING;
+
+                struct epoll_event wev = {0};
+                wev.events    = EPOLLOUT | EPOLLET;
+                wev.data.ptr  = conn;
+                epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
+                continue;
+            }
+
+            if (conn->state == AXIO_WRITING) {
+                while (conn->sent < conn->total) {
+                    ssize_t w = write(conn->fd, conn->response + conn->sent, conn->total - conn->sent);
+
+                    if (w > 0) {
+                        conn->sent += w;
+                    } else if (w == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                        break;
+                    } else {
                         closeConnection(epollFd, conn);
+                        goto nextEvent;
                     }
                 }
-                
-                nextEvent:;
 
+                if (conn->sent == conn->total) {
+                    closeConnection(epollFd, conn);
                 }
             }
         }
+            
+        nextEvent:;
+    }
 
-        // Cleanup
-        for (size_t i = 0; i < server->routeAmount; i++) {
-            free(server->routes[i]);
-        }
+    // Cleanup
+    for (size_t i = 0; i < server->routeAmount; i++) {
+        free(server->routes[i]);
+    }
 
-        free(server->routes);
-        free(server->host);
-        close(server->fd);
-        close(epollFd);
+    free(server->routes);
+    free(server->host);
+    close(server->fd);
+    close(epollFd);
 }

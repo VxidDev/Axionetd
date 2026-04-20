@@ -8,6 +8,11 @@ typedef struct AxioRequest AxioRequest; // http.h
 typedef struct AxioResponse AxioResponse; // http.h
 typedef struct AxioRoute AxioRoute; // router.h
 
+typedef enum {
+    AXIO_READING,
+    AXIO_WRITING
+} AxioState;
+
 typedef struct Axionet {
     int fd; // Listening socket
     int port;

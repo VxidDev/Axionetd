@@ -5,22 +5,22 @@
 #include <string.h>
 #include <stdio.h>
 
-bool _extract_method(char* request, char* buf, int limit) {
+bool _extract_method(AxioRequest *request) {
     int i = 0;
 
     // copy until space or limit - 1
-    while (request[i] != ' ' && request[i] != '\0' && i < limit - 1) {
-        buf[i] = request[i];
+    while (request->raw[i] != ' ' && request->raw[i] != '\0' && i < AXIO_MAX_METHOD - 1) {
+        request->method[i] = request->raw[i];
         i++;
     }
 
-    buf[i] = '\0';
+    request->method[i] = '\0';
 
     return (i > 0); // success only if something was extracted
 }
 
-bool _extract_path(char *request, char *buf, int limit) {
-    char* path = strchr(request, ' ');
+bool _extract_path(AxioRequest *request) {
+    char* path = strchr(request->raw, ' ');
     if (!path) return false;
 
     path++;
@@ -28,17 +28,17 @@ bool _extract_path(char *request, char *buf, int limit) {
     int i = 0;
 
     // copy path until next space
-    while (*path != ' ' && *path != '\0' && i < limit - 1) {
-        buf[i++] = *path++;
+    while (*path != ' ' && *path != '\0' && i < AXIO_MAX_PATH - 1) {
+        request->path[i++] = *path++;
     }
 
-    buf[i] = '\0';
+    request->path[i] = '\0';
     return (i > 0);
 }
 
-AxioHeader* _extract_headers(AxioRequest* request) {
+bool _extract_headers(AxioRequest* request) {
     char *p = strstr(request->raw, "\r\n");
-    if (!p) return NULL;
+    if (!p) return false;
 
     p += 2; // skip "\r\n"
 
@@ -75,40 +75,33 @@ AxioHeader* _extract_headers(AxioRequest* request) {
         } 
     }
     
-    request->headerAmount = count; 
-    return request->headers;
+    request->headerAmount = count;
+    return true;
 } 
 
-AxioRequest* parseRequest(char *buf) {
-    AxioRequest* request = malloc(sizeof(AxioRequest)); // Allocate memory for request
-
-    if (!request) { // Handle memory allocation fail
-        return NULL;
+bool parseRequest(AxioRequest *request, char *buf) {
+    if (!request) {
+        return false;
     }
-
-    if (!_extract_method(buf, request->method, AXIO_MAX_METHOD)) { // Load method (e.g "GET") to request->method or handle error
-        free(request); // Free memory
-        return NULL;
-    }
-
-    if (!_extract_path(buf, request->path, AXIO_MAX_PATH)) { // Load path (e.g "/") to request->path
-        free(request); // Free memory
-        return NULL;
-    }
-
-    // For optimization purposes user should extract headers by using
-    //   AxioHeaders** AxioRequest_getHeaders(const AxioRequest* request)
 
     request->raw = buf;
-    _extract_headers(request); // fills in request->headers
 
-    //request->headers = NULL;
-    //request->raw = buf;
+    if (!_extract_method(request)) { // Load method (e.g "GET") to request->method or handle error
+        return false;
+    }
 
-    return request;
+    if (!_extract_path(request)) { // Load path (e.g "/") to request->path
+        return false;
+    }
+
+    if (!_extract_headers(request)) { // fills in request->headers
+        return false;
+    } 
+
+    return true;
 }
 
-AxioResponse* initResponse(const char* body, int status, AxioHeader* headers, int headerCount) {
+void initResponse(AxioResponse *resp, const char* body, int status, AxioHeader* headers, int headerCount) {
     size_t bodyLen = strlen(body);
 
     // compute size manually 
@@ -129,49 +122,46 @@ AxioResponse* initResponse(const char* body, int status, AxioHeader* headers, in
     needed += 1; // null terminator
 
     char *response = malloc(needed);
-    if (!response) return NULL;
 
-    char *p = response;
+    if (!response) {
+        resp->response = NULL;
+        resp->status = 500;
+        resp->len = 0;
+    } else {
+        char *p = response;
 
-    // write response 
-    p += sprintf(p,
-        "HTTP/1.1 %d\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: close\r\n",
-        status, bodyLen
-    );
-
-    for (int i = 0; i < headerCount; i++) {
-        p += sprintf(p, "%s: %s\r\n",
-            headers[i].key,
-            headers[i].value
+        // write response 
+        p += sprintf(p,
+            "HTTP/1.1 %d\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: close\r\n",
+            status, bodyLen
         );
+
+        for (int i = 0; i < headerCount; i++) {
+            p += sprintf(p, "%s: %s\r\n",
+                headers[i].key,
+                headers[i].value
+            );
+        }
+
+        p += sprintf(p, "\r\n");
+
+        if (bodyLen > 0) {
+            memcpy(p, body, bodyLen);
+            p += bodyLen;
+        }
+
+        *p = '\0';
+
+
+        resp->response = response;
+        resp->len = (size_t)(p - response);
+        resp->status = status;
     }
-
-    p += sprintf(p, "\r\n");
-
-    if (bodyLen > 0) {
-        memcpy(p, body, bodyLen);
-        p += bodyLen;
-    }
-
-    *p = '\0';
-
-    AxioResponse* resp = malloc(sizeof(AxioResponse));
-
-    if (!resp) {
-        free(response);
-        return NULL;
-    }
-
-    resp->response = response;
-    resp->len = (size_t)(p - response);
-    resp->status = status;
-
-    return resp;
 }
 
-AxioResponse* HTMLResponse(const char* body, const int status, AxioHeader* headers, int headerAmount) {
+void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount) {
     AxioHeader h[headerAmount + 1];
 
     for (int i = 0; i < headerAmount; i++) {
@@ -180,5 +170,5 @@ AxioResponse* HTMLResponse(const char* body, const int status, AxioHeader* heade
 
     h[headerAmount] = (AxioHeader){"Content-Type", "text/html"};
 
-    return initResponse(body, status, h, headerAmount);
+    initResponse(resp, body, status, h, headerAmount);
 }

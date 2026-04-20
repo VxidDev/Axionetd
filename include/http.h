@@ -1,7 +1,9 @@
 #ifndef AXIONETD_REQUEST_H
 #define AXIONETD_REQUEST_H
 
+#include "axionetd.h"
 #include "config.h"
+#include <stdbool.h>
 
 typedef struct AxioHeader {
     char *key, *value;
@@ -25,14 +27,17 @@ typedef struct AxioResponse {
 
 typedef struct AxioConnection {
     int fd;
+    AxioState state;
     
     char *response;
     unsigned long total;
     unsigned long sent;
+
+    char *readBuffer;
 } AxioConnection;
 
-AxioRequest* parseRequest(char *buf);
-AxioResponse* initResponse(const char* body, const int status, AxioHeader* headers, int headerCount);
-AxioResponse* HTMLResponse(const char* body, const int status, AxioHeader* headers, int headerAmount);
+bool parseRequest(AxioRequest* request, char *buf);
+void initResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerCount);
+void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount);
 
 #endif // AXIONETD_REQUEST_H

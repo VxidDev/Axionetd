@@ -3,7 +3,8 @@
 
 #include "axionetd.h"
 
-AxioResponse* route404();
-AxioResponse* route405();
+void route404(AxioResponse *resp); // Not Found
+void route405(AxioResponse *resp); // Not Allowed
+void route400(AxioResponse *resp); // Bad Request
 
 #endif // AXIONET_DEFAULTROUTES_H
