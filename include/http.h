@@ -23,6 +23,7 @@ typedef struct AxioRequest {
     bool contentTypeSet;
 
     yyjson_doc *json;
+    yyjson_val *jsonRoot;
 } AxioRequest;
 
 typedef struct AxioResponse {
