@@ -7,15 +7,7 @@
 #include <stdlib.h>
 
 void root(AxioRequest* request, AxioResponse* response) {
-    //for (int i = 0; i < request->headerAmount; i++) {
-    //    printf("%s: %s\n", request->headers[i].key, request->headers[i].value);
-    //}
-
-    AxioHeader contentType[] = {
-        {"Content-Type", "text/html"}
-    };
-
-    initResponse(response, "<h1>Hello, World!</h1>", 200, contentType, 1);
+    HTMLResponse(response, "<h1>Hello, World!</h1>", 200, NULL, 0);
 }
 
 int main(void) {

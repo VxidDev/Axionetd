@@ -4,6 +4,7 @@
 #include "axionetd.h"
 #include "config.h"
 #include <stdbool.h>
+#include <yyjson.h>
 
 typedef struct AxioHeader {
     char *key, *value;
@@ -17,6 +18,11 @@ typedef struct AxioRequest {
 
     AxioHeader headers[AXIO_MAX_HEADERS]; // Populated after calling AxioRequest_getHeaders
     int headerAmount;
+
+    char contentType[64];
+    bool contentTypeSet;
+
+    yyjson_doc *json;
 } AxioRequest;
 
 typedef struct AxioResponse {

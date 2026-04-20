@@ -1,10 +1,9 @@
+#define _GNU_SOURCE
+
 #include "../include/axionetd.h"
 #include "../include/http.h"
 #include "../include/router.h"
 #include "../include/defaultRoutes.h"
-#include <asm-generic/errno.h>
-
-#define _GNU_SOURCE
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -250,7 +249,7 @@ void startServer(Axionet* server) {
 
                     total += n;
 
-                    // optional: stop early if full HTTP request received
+                    // stop early if full HTTP request received
                     if (strstr(buffer, "\r\n\r\n")) {
                         break;
                     }
@@ -305,6 +304,9 @@ void startServer(Axionet* server) {
                 wev.events    = EPOLLOUT | EPOLLET;
                 wev.data.ptr  = conn;
                 epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
+
+                yyjson_doc_free(request.json);
+                
                 continue;
             }
 

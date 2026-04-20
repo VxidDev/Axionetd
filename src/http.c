@@ -71,6 +71,17 @@ bool _extract_headers(AxioRequest* request) {
             request->headers[count].key = line;
             request->headers[count].value = value;
 
+            if (!request->contentTypeSet && strcmp(request->headers[count].key, "Content-Type") == 0) {
+                int i = 0;
+
+                for (; *line && i < 64; i++) {
+                    request->contentType[i] = value[i];
+                } 
+
+                request->contentTypeSet = true;
+                request->contentType[i] = '\0';
+            }
+
             count++;
         } 
     }
@@ -79,11 +90,23 @@ bool _extract_headers(AxioRequest* request) {
     return true;
 } 
 
+bool _extract_json(AxioRequest* request) {
+    char *body = request->headers[request->headerAmount - 1].value + strlen(request->headers[request->headerAmount - 1].value); // Beginning of body
+    if (!body) return false;
+
+    body += 4;
+
+    request->json = yyjson_read(body, strlen(body), 0);
+
+    return request->json != NULL;
+}
+
 bool parseRequest(AxioRequest *request, char *buf) {
     if (!request) {
         return false;
     }
 
+    request->contentTypeSet = false;
     request->raw = buf;
 
     if (!_extract_method(request)) { // Load method (e.g "GET") to request->method or handle error
@@ -97,6 +120,10 @@ bool parseRequest(AxioRequest *request, char *buf) {
     if (!_extract_headers(request)) { // fills in request->headers
         return false;
     } 
+
+    if (strcmp(request->contentType, "application/json") == 0 && !_extract_json(request)) {
+        return false;
+    }
 
     return true;
 }
