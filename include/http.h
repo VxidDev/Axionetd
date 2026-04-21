@@ -43,6 +43,7 @@ typedef struct AxioConnection {
     char *readBuffer;
 } AxioConnection;
 
+bool AxioRequest_parseJSON(AxioRequest* request);
 bool parseRequest(AxioRequest* request, char *buf);
 void initResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerCount);
 void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount);

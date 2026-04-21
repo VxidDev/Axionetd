@@ -90,7 +90,11 @@ bool _extract_headers(AxioRequest* request) {
     return true;
 } 
 
-bool _extract_json(AxioRequest* request) {
+bool AxioRequest_parseJSON(AxioRequest* request) {
+    if (strcmp(request->contentType, "application/json") != 0) {
+        return false;
+    }
+
     char *body = request->headers[request->headerAmount - 1].value + strlen(request->headers[request->headerAmount - 1].value); // Beginning of body
     if (!body) return false;
 
@@ -121,9 +125,8 @@ bool parseRequest(AxioRequest *request, char *buf) {
         return false;
     } 
 
-    if (strcmp(request->contentType, "application/json") == 0 && !_extract_json(request)) {
-        return false;
-    }
+    request->json = NULL; // Initialize
+    request->jsonRoot = NULL; // Initialize
 
     return true;
 }
