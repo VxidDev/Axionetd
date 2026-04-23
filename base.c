@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 void root(AxioRequest* request, AxioResponse* response) {
     /*
@@ -31,15 +32,24 @@ void root(AxioRequest* request, AxioResponse* response) {
     HTMLResponse(response, "<h1>Hello, World!</h1>", 200, NULL, 0);
 }
 
+void diffPath(AxioRequest* request, AxioResponse* response) {
+    sleep(5);
+    HTMLResponse(response, "<h1>Done!</h1>", 200, NULL, 0);
+}
+
 int main(void) {
-    Axionet* server = initServer("0.0.0.0", 8000, 8192, false);
+    Axionet* server = initServer("0.0.0.0", 8000, 8192, 0, false);
 
     if (!server) {
         printf("Failed to create server.\n");
         return 1;
     }
 
-    addRoute(server, "/", (char*[]){}, 0, root);
+    AxioRoute route;
+    addRoute(server, "/", (char*[]){}, 0, root, &route, false);
+
+    AxioRoute route2;
+    addRoute(server, "/heavy", (char*[]){}, 0, diffPath, &route2, true);
 
     startServer(server);
     free(server);

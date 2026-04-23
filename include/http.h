@@ -8,6 +8,7 @@
 
 typedef struct AxioHeader {
     char *key, *value;
+    size_t klen, vlen;
 } AxioHeader;
 
 typedef struct AxioRequest {

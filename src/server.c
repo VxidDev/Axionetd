@@ -4,8 +4,8 @@
 #include "../include/http.h"
 #include "../include/router.h"
 #include "../include/defaultRoutes.h"
+#include "../include/threading.h"
 
-#include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -22,8 +22,14 @@
 
 #include <stdio.h>
 
+#include <pthread.h>
+
 Axionet* globalServer = NULL;
+int globalEpollFd = -1;
 bool enableLogging = true;
+bool useThreading;
+
+AxioJobQueue jobQueue;
 
 const char* statusCodeToText(int status) {
     switch (status / 100) {
@@ -58,7 +64,94 @@ void closeConnection(int epollFd, AxioConnection *conn) {
     free(conn);
 }
 
-Axionet* initServer(const char *host, const int port, const int backlog, const bool logging) {
+void pushJob(AxioJob job) {
+    pthread_mutex_lock(&jobQueue.mutex);
+
+    while (jobQueue.size == AXIO_JOB_QUEUE_SIZE) {
+        pthread_cond_wait(&jobQueue.cond, &jobQueue.mutex);
+    }
+
+    jobQueue.jobs[jobQueue.back] = job;
+    jobQueue.back = (jobQueue.back + 1) % AXIO_JOB_QUEUE_SIZE;
+    jobQueue.size++;
+
+    pthread_cond_signal(&jobQueue.cond);
+    pthread_mutex_unlock(&jobQueue.mutex);
+}
+
+AxioJob popJob() {
+    pthread_mutex_lock(&jobQueue.mutex);
+
+    while (jobQueue.size == 0) {
+        pthread_cond_wait(&jobQueue.cond, &jobQueue.mutex);
+    }
+
+    AxioJob job = jobQueue.jobs[jobQueue.front];
+    jobQueue.front = (jobQueue.front + 1) % AXIO_JOB_QUEUE_SIZE;
+    jobQueue.size--;
+
+    pthread_cond_signal(&jobQueue.cond);
+    pthread_mutex_unlock(&jobQueue.mutex);
+
+    return job;
+}
+
+void* workerThread(void *arg) {
+    (void)arg;
+
+    while (1) {
+        AxioJob job = popJob();
+
+        AxioResponse response = {0};
+        bool handled = false;
+
+        for (size_t j = 0; j < globalServer->routeAmount; j++) {
+            if (strcmp(job.request.path, globalServer->routes[j]->path) == 0) {
+
+                if (!isMethodAllowed(globalServer->routes[j], job.request.method)) {
+                    route405(&response);
+                    handled = true;
+                    break;
+                }
+
+                globalServer->routes[j]->handler(&job.request, &response);
+                handled = true;
+                break;
+            }
+        }
+
+        if (!handled || !response.response) {
+            route404(&response);
+        }
+
+        if (enableLogging) {
+            printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
+                job.request.method,
+                job.request.path,
+                response.status,
+                statusCodeToText(response.status)
+            );
+        }
+
+        job.conn->response = response.response;
+        job.conn->total = response.len;
+        job.conn->sent = 0;
+        job.conn->state = AXIO_WRITING;
+
+        struct epoll_event ev = {0};
+        ev.events = EPOLLOUT | EPOLLET;
+        ev.data.ptr = job.conn;
+
+        epoll_ctl(globalEpollFd, EPOLL_CTL_MOD, job.conn->fd, &ev);
+
+        yyjson_doc_free(job.request.json);
+    }
+
+    return NULL;
+}
+
+Axionet* initServer(const char *host, const int port, const int backlog, int workers, const bool logging) {
+    useThreading = (workers > 0);
     enableLogging = logging;
 
     int serverFd = socket(AF_INET, SOCK_STREAM, 0); // Initialize socket
@@ -112,6 +205,7 @@ Axionet* initServer(const char *host, const int port, const int backlog, const b
     server->host = strdup(bindHost ? bindHost : "0.0.0.0");
     server->backlog = backlog;
     server->isRunning = false;
+    server->workers = workers;
 
     server->routeAmount = 0;
     server->routeCapacity = 4;
@@ -138,24 +232,34 @@ void stopServer(int sig) {
 void startServer(Axionet* server) {
     globalServer = server;
 
-    // Handle CTRL + C
+    // init queue
+    if (useThreading) {
+        pthread_mutex_init(&jobQueue.mutex, NULL);
+        pthread_cond_init(&jobQueue.cond, NULL);
+        jobQueue.front = jobQueue.back = jobQueue.size = 0;
+    }
+
+    // workers
+    pthread_t *workers = NULL;
+
+    if (useThreading) {
+        workers = malloc(sizeof(pthread_t) * server->workers);
+
+        for (int i = 0; i < server->workers; i++) {
+            pthread_create(&workers[i], NULL, workerThread, NULL);
+            pthread_detach(workers[i]);
+        }
+    }
+
+    // CTRL + C handling
     struct sigaction sa = {0};
-
     sa.sa_handler = stopServer;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-
     sigaction(SIGINT, &sa, NULL);
-    //
 
-    int epollFd = epoll_create1(0);
-    if (epollFd == -1) return;
+    globalEpollFd = epoll_create1(0);
 
     fcntl(server->fd, F_SETFL, O_NONBLOCK);
-
-    if (listen(server->fd, server->backlog) == -1) { // Prepare accepting connect and handle error
-        return;
-    }
+    listen(server->fd, server->backlog);
 
     server->isRunning = true;
 
@@ -163,183 +267,159 @@ void startServer(Axionet* server) {
     ev.events = EPOLLIN | EPOLLET;
     ev.data.fd = server->fd;
 
-    epoll_ctl(epollFd, EPOLL_CTL_ADD, server->fd, &ev);
+    epoll_ctl(globalEpollFd, EPOLL_CTL_ADD, server->fd, &ev);
 
     struct epoll_event events[64];
 
-    printf("\033[1;35mAxionetd: \033[33mServer is running on \033[36mhttp://%s:%d\033[0m\n", server->host, server->port);
-        
-    while (server->isRunning) { // Event loop
-        int nready = epoll_wait(epollFd, events, 64, -1); // Wait for connection
-        if (nready <= 0) continue;
+    printf("\033[1;35mAxionetd: \033[33mServer running on \033[36mhttp://%s:%d\033[0m\n",
+           server->host, server->port);
 
-        for (int i = 0; i < nready; i++) {
-            // Server Socket
-            if (events[i].data.fd == server->fd) { // New connection
-                while (true) {
+    while (server->isRunning) {
+        int n = epoll_wait(globalEpollFd, events, 64, -1);
+        if (n <= 0) continue;
+
+        for (int i = 0; i < n; i++) {
+            if (events[i].data.fd == server->fd) {
+                while (1) {
                     int clientFd = accept4(server->fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
-                    if (clientFd == -1) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK)
-                            break;
-                        else
-                            continue;
-                    }
-                    
-                    AxioConnection *conn = malloc(sizeof(AxioConnection));
+                    if (clientFd < 0) break;
 
+                    AxioConnection *conn = malloc(sizeof(AxioConnection));
+                    memset(conn, 0, sizeof(*conn));
                     conn->fd = clientFd;
-                    conn->response = NULL;
-                    conn->total = 0;
-                    conn->sent = 0;
                     conn->state = AXIO_READING;
 
                     struct epoll_event cev = {0};
-                    cev.events = EPOLLIN | EPOLLET ;
+                    cev.events = EPOLLIN | EPOLLET;
                     cev.data.ptr = conn;
 
-                    epoll_ctl(epollFd, EPOLL_CTL_ADD, clientFd, &cev);
+                    epoll_ctl(globalEpollFd, EPOLL_CTL_ADD, clientFd, &cev);
                 }
-
-                continue;
-            } 
-            // Client request ready
-            AxioConnection *conn = events[i].data.ptr;
-
-            // Error / hangup
-            if (events[i].events & (EPOLLERR | EPOLLHUP)) {
-                closeConnection(epollFd, conn);
                 continue;
             }
 
-            // Read
-            if (conn->state == AXIO_READING && (events[i].events & EPOLLIN)) {
-                size_t bufSize = 4096;
-                size_t total = 0;
+            AxioConnection *conn = events[i].data.ptr;
 
-                char *buffer = malloc(bufSize);
+            if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+                closeConnection(globalEpollFd, conn);
+                continue;
+            }
+
+            if (conn->state == AXIO_READING && (events[i].events & EPOLLIN)) {
+
+                size_t size = 4096, total = 0;
+                char *buf = malloc(size);
 
                 while (1) {
-                    // grow if needed
-                    if (total >= bufSize - 1) {
-                        bufSize *= 2;
-                        char *tmp = realloc(buffer, bufSize);
-
-                        if (!tmp) {
-                            free(buffer);
-                            closeConnection(epollFd, conn);
-                            goto nextEvent;
-                        }
-
-                        buffer = tmp;
+                    if (total >= size - 1) {
+                        size *= 2;
+                        buf = realloc(buf, size);
                     }
 
-                    ssize_t n = read(conn->fd, buffer + total, bufSize - total - 1);
+                    ssize_t r = read(conn->fd, buf + total, size - total - 1);
 
-                    if (n < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            break;
-                        }
+                    if (r <= 0) break;
 
-                        closeConnection(epollFd, conn);
-                        goto nextEvent;
-                    }
+                    total += r;
 
-                    if (n == 0) break; // connection closed
-
-                    total += n;
-
-                    // stop early if full HTTP request received
-                    if (strstr(buffer, "\r\n\r\n")) {
-                        break;
-                    }
+                    if (strstr(buf, "\r\n\r\n")) break;
                 }
 
-                buffer[total] = '\0';
+                buf[total] = '\0';
+                conn->readBuffer = buf;
 
-                conn->readBuffer = buffer;
+                AxioRequest req = {0};
 
-                AxioRequest request = {0};
-                AxioResponse response = {0};
+                if (!parseRequest(&req, buf)) {
+                    AxioResponse resp = {0};
+                    route400(&resp);
 
-                if (!parseRequest(&request, buffer)) { // Fill in request or handle error 
-                    if (enableLogging) {
-                        printf("\033[1;31mERROR:\033[33m Malformed request. \033[0m\n");
-                    }
+                    conn->response = resp.response;
+                    conn->total = resp.len;
+                    conn->state = AXIO_WRITING;
 
-                    route400(&response);
                 } else {
+                    bool handled = false;
+
                     for (size_t j = 0; j < server->routeAmount; j++) {
-                        if (strcmp(request.path, server->routes[j]->path) == 0) {
-                            if (!isMethodAllowed(server->routes[j], request.method)) {
-                                route405(&response);
+                        if (strcmp(req.path, server->routes[j]->path) == 0) {
+                            if (!isMethodAllowed(server->routes[j], req.method)) {
+                                AxioResponse resp = {0};
+                                route405(&resp);
+
+                                conn->response = resp.response;
+                                conn->total = resp.len;
+                                conn->state = AXIO_WRITING;
+                                handled = true;
                                 break;
                             }
 
-                            server->routes[j]->handler(&request, &response);
+                            if (useThreading && server->routes[j]->threaded) {
+                                // thread pool
+                                AxioJob job = {0};
+                                job.conn = conn;
+                                job.request = req;
+
+                                pushJob(job);
+                            } else {
+                                // fallback inline
+                                AxioResponse resp = {0};
+
+                                server->routes[j]->handler(&req, &resp);
+
+                                if (!resp.response) {
+                                    route404(&resp);
+                                }
+
+                                conn->response = resp.response;
+                                conn->total = resp.len;
+                                conn->sent = 0;
+                                conn->state = AXIO_WRITING;
+
+                                struct epoll_event ev = {0};
+                                ev.events = EPOLLOUT | EPOLLET;
+                                ev.data.ptr = conn;
+
+                                epoll_ctl(globalEpollFd, EPOLL_CTL_MOD, conn->fd, &ev);
+
+                                yyjson_doc_free(req.json);
+                            }
+
+                            handled = true;
                             break;
                         }
                     }
 
-                    if (!response.response) {
-                        route404(&response);
+                    if (!handled) {
+                        AxioResponse resp = {0};
+                        route404(&resp);
+
+                        conn->response = resp.response;
+                        conn->total = resp.len;
+                        conn->state = AXIO_WRITING;
                     }
                 }
-
-                if (enableLogging) {
-                    printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
-                        request.method, request.path, response.status, statusCodeToText(response.status)
-                    );
-                }
-
-                // Store response
-                conn->response = response.response;
-                response.response = NULL;
-
-                conn->total = strlen(conn->response);
-                conn->sent = 0;
-                conn->state = AXIO_WRITING;
-
-                struct epoll_event wev = {0};
-                wev.events    = EPOLLOUT | EPOLLET;
-                wev.data.ptr  = conn;
-                epoll_ctl(epollFd, EPOLL_CTL_MOD, conn->fd, &wev);
-
-                yyjson_doc_free(request.json);
-                
-                continue;
             }
 
             if (conn->state == AXIO_WRITING) {
                 while (conn->sent < conn->total) {
                     ssize_t w = write(conn->fd, conn->response + conn->sent, conn->total - conn->sent);
 
-                    if (w > 0) {
-                        conn->sent += w;
-                    } else if (w == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                        break;
-                    } else {
-                        closeConnection(epollFd, conn);
-                        goto nextEvent;
-                    }
+                    if (w > 0) conn->sent += w;
+                    else break;
                 }
 
-                if (conn->sent == conn->total) {
-                    closeConnection(epollFd, conn);
+                if (conn->sent >= conn->total) {
+                    closeConnection(globalEpollFd, conn);
                 }
             }
         }
-            
-        nextEvent:;
-    }
-
-    // Cleanup
-    for (size_t i = 0; i < server->routeAmount; i++) {
-        free(server->routes[i]);
     }
 
     free(server->routes);
     free(server->host);
+    free(workers);
     close(server->fd);
-    close(epollFd);
+    close(globalEpollFd);
 }

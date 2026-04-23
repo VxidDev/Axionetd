@@ -1,24 +1,43 @@
 CC = gcc
 
-CFLAGS = -Wall -O0 -Iinclude
+CFLAGS = -Wall -O0 -Iinclude -fPIC
 
 SRC_DIR = src
 BUILD_DIR = build
-LIB = libaxionetd.a
+LIB = libaxionetd.so
+
+PREFIX ?= /usr/local
+LIBDIR = $(PREFIX)/lib
+INCLUDEDIR = $(PREFIX)/include/axionetd
 
 C_SRC = $(shell find $(SRC_DIR) -name '*.c')
-
 OBJ = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(C_SRC)) 
 
 all: $(LIB)
 
 $(LIB): $(OBJ)
-	ar rcs $@ $(OBJ)
+	$(CC) -shared -o $@ $(OBJ) -lyyjson
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+install: $(LIB)
+	@echo "Installing library to $(LIBDIR)"
+	mkdir -p $(LIBDIR)
+	cp $(LIB) $(LIBDIR)
+
+	@echo "Installing headers to $(INCLUDEDIR)"
+	mkdir -p $(INCLUDEDIR)
+	cp -r include/* $(INCLUDEDIR)
+
+	@echo "Updating linker cache"
+	ldconfig
+
+uninstall:
+	rm -f $(LIBDIR)/$(LIB)
+	rm -rf $(INCLUDEDIR)
+	ldconfig
+
 clean:
 	rm -rf $(BUILD_DIR) $(LIB)
-

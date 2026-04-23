@@ -16,23 +16,25 @@ bool _extract_method(AxioRequest *request) {
 
     request->method[i] = '\0';
 
+    request->raw += i;
+
     return (i > 0); // success only if something was extracted
 }
 
 bool _extract_path(AxioRequest *request) {
-    char* path = strchr(request->raw, ' ');
-    if (!path) return false;
+    if (!request->raw) return false;
 
-    path++;
+    request->raw++;
 
     int i = 0;
 
     // copy path until next space
-    while (*path != ' ' && *path != '\0' && i < AXIO_MAX_PATH - 1) {
-        request->path[i++] = *path++;
+    while (*request->raw != ' ' && *request->raw != '\0' && i < AXIO_MAX_PATH - 1) {
+        request->path[i++] = *request->raw++;
     }
 
     request->path[i] = '\0';
+    request->raw += i;
     return (i > 0);
 }
 
@@ -132,64 +134,120 @@ bool parseRequest(AxioRequest *request, char *buf) {
 }
 
 void initResponse(AxioResponse *resp, const char* body, int status, AxioHeader* headers, int headerCount) {
-    size_t bodyLen = strlen(body);
-
+    size_t bodyLen = body ? strlen(body) : 0;
+    
     // compute size manually 
     size_t needed = 0;
-
+    
     // status line (estimate fixed format)
     needed += 32; // "HTTP/1.1 200\r\n" + safety margin
-
-    needed += 22; // "Content-Length: %zu\r\n"
-    needed += 20; // "Connection: close\r\n"
-
+    needed += 18; // "Content-Length: " + digits + "\r\n"
+    needed += 22; // "Connection: close\r\n"
+    
     for (int i = 0; i < headerCount; i++) {
-        needed += strlen(headers[i].key) + strlen(headers[i].value) + 4; // ": \r\n"
+        size_t klen = headers[i].klen ? headers[i].klen : strlen(headers[i].key);
+        size_t vlen = headers[i].vlen ? headers[i].vlen : strlen(headers[i].value);
+        needed += klen + vlen + 4; // ": \r\n"
     }
-
-    needed += 2; // "\r\n"
+    
+    needed += 2; // "\r\n" (blank line between headers and body)
     needed += bodyLen;
     needed += 1; // null terminator
-
+    
+    if (needed == 0) {
+        resp->response = NULL;
+        resp->status = 500;
+        resp->len = 0;
+        return;
+    }
+    
     char *response = malloc(needed);
-
     if (!response) {
         resp->response = NULL;
         resp->status = 500;
         resp->len = 0;
-    } else {
-        char *p = response;
-
-        // write response 
-        p += sprintf(p,
-            "HTTP/1.1 %d\r\n"
-            "Content-Length: %zu\r\n"
-            "Connection: close\r\n",
-            status, bodyLen
-        );
-
-        for (int i = 0; i < headerCount; i++) {
-            p += sprintf(p, "%s: %s\r\n",
-                headers[i].key,
-                headers[i].value
-            );
-        }
-
-        p += sprintf(p, "\r\n");
-
-        if (bodyLen > 0) {
-            memcpy(p, body, bodyLen);
-            p += bodyLen;
-        }
-
-        *p = '\0';
-
-
-        resp->response = response;
-        resp->len = (size_t)(p - response);
-        resp->status = status;
+        return;
     }
+    
+    char *p = response;
+    
+    // Write status line
+    memcpy(p, "HTTP/1.1 ", 9); 
+    p += 9;
+    
+    // Write status code 
+    int statusCode = status;
+    if (statusCode < 100) statusCode = 500;
+    if (statusCode > 999) statusCode = 500;
+    
+    p[0] = '0' + (statusCode / 100);
+    p[1] = '0' + ((statusCode / 10) % 10);
+    p[2] = '0' + (statusCode % 10);
+    p += 3;
+    
+    memcpy(p, "\r\n", 2);
+    p += 2;
+    
+    // Write Content-Length header
+    memcpy(p, "Content-Length: ", 16);
+    p += 16;
+    
+    // Convert body length to decimal string
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%zu", bodyLen);
+    if (len > 0) {
+        memcpy(p, buf, len);
+        p += len;
+    }
+    
+    memcpy(p, "\r\n", 2);
+    p += 2;
+    
+    //write Connection header
+    memcpy(p, "Connection: close\r\n", 19);
+    p += 19;
+    
+    // Write custom headers
+    for (int i = 0; i < headerCount; i++) {
+        const char* key = headers[i].key;
+        const char* value = headers[i].value;
+        
+        // Skip NULL headers
+        if (!key || !value) continue;
+        
+        size_t klen = headers[i].klen ? headers[i].klen : strlen(key);
+        size_t vlen = headers[i].vlen ? headers[i].vlen : strlen(value);
+        
+        memcpy(p, key, klen);
+        p += klen;
+        *p++ = ':';
+        *p++ = ' ';
+        memcpy(p, value, vlen);
+        p += vlen;
+        *p++ = '\r';
+        *p++ = '\n';
+    }
+    
+    // Write blank line
+    p[0] = '\r';
+    p[1] = '\n';
+    p += 2;
+    
+    // Write body
+    if (bodyLen > 0) {
+        memcpy(p, body, bodyLen);
+        p += bodyLen;
+    }
+    
+    // Null terminate
+    *p = '\0';
+    
+    // Set response fields
+    resp->response = response;
+    resp->len = (size_t)(p - response);
+    resp->status = status;
 }
+
 
 void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount) {
     AxioHeader h[headerAmount + 1];
@@ -198,7 +256,9 @@ void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHe
         h[i] = headers[i];
     }
 
-    h[headerAmount] = (AxioHeader){"Content-Type", "text/html"};
+    char* key = "Content-Type";
+    char* value = "text/html";
+    h[headerAmount] = (AxioHeader){key, value, strlen(key), strlen(value)};
 
     initResponse(resp, body, status, h, headerAmount);
 }

@@ -10,8 +10,10 @@ typedef struct AxioRoute {
     char *methods[AXIO_MAX_METHODS]; // Array of methods route allows or NULL as a wildcard
     int amountOfMethods;
     void (*handler)(AxioRequest *, AxioResponse *); // Handler which should return a HTTP response.
+
+    bool threaded;
 } AxioRoute;
 
-bool addRoute(Axionet* server, char* path, char **methods, size_t amountOfMethods, void (*handler)(AxioRequest *, AxioResponse *));
+bool addRoute(Axionet* server, char* path, char **methods, size_t amountOfMethods, void (*handler)(AxioRequest *, AxioResponse *), AxioRoute *route, bool threaded);
 
 #endif // AXIONETD_ROUTER_H

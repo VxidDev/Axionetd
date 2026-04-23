@@ -14,6 +14,7 @@ typedef enum {
 } AxioState;
 
 typedef struct Axionet {
+    int workers;
     int fd; // Listening socket
     int port;
     char* host;
@@ -29,7 +30,7 @@ typedef struct Axionet {
 extern Axionet *globalServer;
 extern bool enableLogging;
 
-Axionet* initServer(const char* host, const int port, const int backlog, const bool logging);
+Axionet* initServer(const char* host, const int port, const int backlog, int workers, const bool logging);
 void startServer(Axionet* server);
 
 #endif // AXIONETD_H

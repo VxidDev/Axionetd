@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: axionet
+Version: 0.0.1
+Summary: Python wrapper for Axionetd, a lightweight HTTP server framework written in C, which is built from scratch using raw sockets.
+Author: VxidDev
+License: GPL-3.0
+Project-URL: Homepage, https://github.com/VxidDev/Axionetd
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown

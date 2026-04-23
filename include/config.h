@@ -6,4 +6,6 @@
 #define AXIO_MAX_HEADERS 32
 #define AXIO_MAX_METHODS 8
 
+#define AXIO_JOB_QUEUE_SIZE 1024
+
 #endif // AXIO_CONFIG_H

@@ -1,0 +1,23 @@
+[project]
+name = "axionet"
+version = "0.0.1"
+description = "Python wrapper for Axionetd, a lightweight HTTP server framework written in C, which is built from scratch using raw sockets."
+readme = "README.md"
+license = {text = "GPL-3.0"}
+
+authors = [
+    {name = "VxidDev"}
+]
+
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["axionet*"]
+
+[build-system]
+requires = ["setuptools>=65.5.1", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project.urls]
+Homepage = "https://github.com/VxidDev/Axionetd"
