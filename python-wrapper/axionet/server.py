@@ -14,6 +14,7 @@ _lib.initServer.argtypes = [
     ctypes.c_char_p,
     ctypes.c_int,
     ctypes.c_int,
+    ctypes.c_int,
     ctypes.c_bool
 ]
 
@@ -45,79 +46,87 @@ _lib.initResponse.argtypes = [
 ]
 _lib.initResponse.restype = None
 
-# Wrapper functions
-def init_server(host: str, port: int, backlog: int, logging: bool):
-    host_bytes = host.encode('utf-8')
-    server_ptr = _lib.initServer(host_bytes, port, backlog, logging)
+class AxionetInstance:
+    def __init__(self, host: str, port: int, backlog: int, workers: int, logging: bool):
+        self._host = host
+        self._port = port
+        self._backlog = backlog
+        self._workers = workers
+        self._logging = logging
 
-    if not server_ptr:
-        raise RuntimeError("Failed to initialize server.")
+        self._server = None
 
-    return server_ptr
+    def init_server(self):
+        host_bytes = self._host.encode('utf-8')
+        self._server = _lib.initServer(host_bytes, self._port, self._backlog, self._workers, self._logging)
 
-def start_server(server_ptr):
-    _lib.startServer(server_ptr)
+        if not self._server:
+            raise RuntimeError("Failed to initialize server.")
 
-def add_route(server_ptr, path: str, methods: list[str], handler_func, threaded: bool = False):
-    c_path = path.encode('utf-8')
+    def start_server(self):
+        _lib.startServer(self._server)
 
-    # Build methods array
-    c_methods_array = (ctypes.c_char_p * len(methods))()
+    def add_route(self, path: str, methods: list[str], handler_func, threaded: bool = False):
+        c_path = path.encode('utf-8')
 
-    for i, method in enumerate(methods):
-        c_methods_array[i] = method.encode('utf-8')
+        # Build methods array
+        c_methods_array = (ctypes.c_char_p * len(methods))()
 
-    # Bridge C -> Python
-    @HANDLER_CALLBACK
-    def c_handler(c_request_ptr, c_response_ptr):
-        try:
-            handler_func(c_request_ptr, c_response_ptr)
-        except Exception as e:
-            print(f"[Axionet Python handler error] {e}")
+        for i, method in enumerate(methods):
+            c_methods_array[i] = method.encode('utf-8')
 
-    route_instance = AxioRoute()
+        # Bridge C -> Python
+        @HANDLER_CALLBACK
+        def c_handler(c_request_ptr, c_response_ptr):
+            try:
+                handler_func(c_request_ptr, c_response_ptr)
+            except Exception as e:
+                print(f"[Handler Error] {str(e)}")
 
-    # Prevent GC
-    _py_callbacks.append((c_handler, route_instance, c_methods_array))
+        route_instance = AxioRoute()
 
-    result = _lib.addRoute(
-        server_ptr,
-        c_path,
-        c_methods_array,
-        len(methods),
-        c_handler,
-        ctypes.byref(route_instance),
-        threaded
-    )
+        # Prevent GC
+        _py_callbacks.append((c_handler, route_instance, c_methods_array))
 
-    return result
+        result = _lib.addRoute(
+            self._server,
+            c_path,
+            c_methods_array,
+            len(methods),
+            c_handler,
+            ctypes.byref(route_instance),
+            threaded
+        )
 
-def init_response(resp_ptr, body: str, status: int, headers=None):
-    c_body = body.encode('utf-8')
+        return result
 
-    c_headers_array = None
-    header_count = 0
+    @staticmethod
+    def init_response(resp_ptr, body: str, status: int, headers=None):
+        c_body = body.encode('utf-8')
 
-    if headers:
-        header_count = min(len(headers), AXIO_MAX_HEADERS)
-        c_headers_array = (AxioHeader * header_count)()
+        c_headers_array = None
+        header_count = 0
 
-        for i in range(header_count):
-            key_bytes = headers[i][0].encode('utf-8')
-            value_bytes = headers[i][1].encode('utf-8')
+        if headers:
+            header_count = min(len(headers), AXIO_MAX_HEADERS)
+            c_headers_array = (AxioHeader * header_count)()
 
-            c_headers_array[i].key = key_bytes
-            c_headers_array[i].value = value_bytes
-            c_headers_array[i].klen = len(key_bytes)
-            c_headers_array[i].vlen = len(value_bytes)
+            for i in range(header_count):
+                key_bytes = headers[i][0].encode('utf-8')
+                value_bytes = headers[i][1].encode('utf-8')
 
-    _lib.initResponse(
-        resp_ptr,
-        c_body,
-        status,
-        c_headers_array if c_headers_array else None,
-        header_count
-    )
+                c_headers_array[i].key = key_bytes
+                c_headers_array[i].value = value_bytes
+                c_headers_array[i].klen = len(key_bytes)
+                c_headers_array[i].vlen = len(value_bytes)
+
+        _lib.initResponse(
+            resp_ptr,
+            c_body,
+            status,
+            c_headers_array if c_headers_array else None,
+            header_count
+        )
 
 # --- Helper for safe string decoding ---
 def cstr_to_py(c_array):

@@ -1,4 +1,4 @@
-from axionet import init_response, init_server, start_server, add_route, cstr_to_py
+from axionet import cstr_to_py, AxionetInstance
 
 def my_handler(req, resp):
     path = cstr_to_py(req.contents.path)
@@ -6,7 +6,7 @@ def my_handler(req, resp):
 
     print(f"[Python] {method} {path}")
 
-    init_response(
+    server.init_response(
         resp,
         "<h1>Hello from Python!</h1>",
         200,
@@ -14,14 +14,15 @@ def my_handler(req, resp):
     )
 
 try:
-    server = init_server("127.0.0.1", 8080, 10, True)
+    server = AxionetInstance("127.0.0.1", 8080, 10, 4, True)
+    server.init_server()
 
-    if add_route(server, "/hello", ["GET"], my_handler):
+    if server.add_route("/hello", ["GET"], my_handler):
         print("Route added.")
     else:
         print("Failed to add route.")
 
-    start_server(server)
+    server.start_server()
 
 except RuntimeError as e:
     print(f"Error: {e}")
