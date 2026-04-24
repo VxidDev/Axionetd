@@ -92,6 +92,71 @@ bool _extract_headers(AxioRequest* request) {
     return true;
 } 
 
+void _extract_queryString(AxioRequest* request) {
+    char *query = strchr(request->path, '?');
+
+    if (query) {
+        *query = '\0';
+        request->queryString = query + 1;
+    } else {
+        request->queryString = NULL;
+    }
+}
+
+bool _parse_query_params(AxioRequest* request) {
+    if (!request->queryString) {
+        request->queryParamAmount = 0;
+        return true;
+    }
+
+    char *p = request->queryString;
+
+    while (*p) {
+        if (*p == '&') {  // skip empty params
+            p++;
+            continue;
+        }
+
+        if (request->queryParamAmount >= AXIO_MAX_QUERY_PARAMS)
+            return false;
+
+        char *eq = strchr(p, '=');
+        char *amp = strchr(p, '&');
+
+        if (!eq || (amp && eq > amp)) {
+            // key without value
+            return false;
+        }
+
+        int klen = eq - p;
+        if (klen >= AXIO_MAX_QUERY_KEY_LEN) return false;
+
+        memcpy(request->queryParams[request->queryParamAmount].key, p, klen);
+        request->queryParams[request->queryParamAmount].key[klen] = '\0';
+        request->queryParams[request->queryParamAmount].klen = klen;
+
+        char *value = eq + 1;
+
+        int vlen = amp ? (amp - value) : strlen(value);
+        if (vlen >= AXIO_MAX_QUERY_VALUE_LEN) return false;
+
+        memcpy(request->queryParams[request->queryParamAmount].value, value, vlen);
+        request->queryParams[request->queryParamAmount].value[vlen] = '\0';
+        request->queryParams[request->queryParamAmount].vlen = vlen;
+
+        // printf("%s = %s\n", request->queryParams[request->queryParamAmount].key, request->queryParams[request->queryParamAmount].value);
+
+        request->queryParamAmount++;
+
+        if (!amp)
+            break;
+
+        p = amp + 1;
+    }
+
+    return true;
+}
+
 bool AxioRequest_parseJSON(AxioRequest* request) {
     if (strcmp(request->contentType, "application/json") != 0) {
         return false;
@@ -125,7 +190,13 @@ bool parseRequest(AxioRequest *request, char *buf) {
 
     if (!_extract_headers(request)) { // fills in request->headers
         return false;
-    } 
+    }
+    
+    _extract_queryString(request);
+
+    if (!_parse_query_params(request)) { // fills in request->queryParams
+        return false;
+    }
 
     request->json = NULL; // Initialize
     request->jsonRoot = NULL; // Initialize

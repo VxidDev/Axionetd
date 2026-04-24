@@ -3,6 +3,7 @@
 
 #include "axionetd.h"
 #include "config.h"
+#include <stdalign.h>
 #include <stdbool.h>
 #include <yyjson.h>
 
@@ -11,11 +12,20 @@ typedef struct AxioHeader {
     size_t klen, vlen;
 } AxioHeader;
 
-typedef struct AxioRequest {
+typedef struct AxioQueryParam {
+    char key[AXIO_MAX_QUERY_KEY_LEN], value[AXIO_MAX_QUERY_VALUE_LEN];
+    int klen, vlen;
+} AxioQueryParam;
+
+typedef struct AxioRequest { 
     char *raw; // Raw request body
 
     char path[AXIO_MAX_PATH]; // Requested path, e.g "/"
     char method[AXIO_MAX_METHOD]; // Method e.g "GET"
+
+    char *queryString;
+    AxioQueryParam queryParams[AXIO_MAX_QUERY_PARAMS];
+    int queryParamAmount;
 
     AxioHeader headers[AXIO_MAX_HEADERS]; // Populated after calling AxioRequest_getHeaders
     int headerAmount;
