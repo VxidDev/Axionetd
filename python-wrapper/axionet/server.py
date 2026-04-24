@@ -66,6 +66,28 @@ class AxionetInstance:
     def start_server(self):
         _lib.startServer(self._server)
 
+    def route(self, path: str, methods: list[str], threaded: bool = False):
+        def decorator(func: callable):
+            def wrapper(req, resp):
+                result = func(req, resp)
+
+                if isinstance(result, tuple):
+                    length = len(result)
+
+                    body = result[0]
+                    status_code = result[1] if length > 1 else 200
+                    headers = result[2] if length > 2 else []
+
+                    return self.init_response(resp, body, status_code, headers)
+
+                return self.init_response(resp, result, 200, [])
+
+            self.add_route(path, methods, wrapper, threaded)
+
+            return wrapper
+
+        return decorator
+
     def add_route(self, path: str, methods: list[str], handler_func, threaded: bool = False):
         c_path = path.encode('utf-8')
 
