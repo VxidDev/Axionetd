@@ -1,4 +1,5 @@
 #include "../include/http.h"
+#include "../include/memory-pool.h"
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -103,11 +104,15 @@ void _extract_queryString(AxioRequest* request) {
     }
 }
 
-bool _parse_query_params(AxioRequest* request) {
+bool _parse_query_params(AxioRequest* request, MemoryPool *queryPool) {
     if (!request->queryString) {
+        request->queryParams = NULL;
         request->queryParamAmount = 0;
         return true;
     }
+
+    request->queryParams = poolAlloc(queryPool);
+    request->queryParamAmount = 0;
 
     char *p = request->queryString;
 
@@ -157,6 +162,7 @@ bool _parse_query_params(AxioRequest* request) {
     return true;
 }
 
+
 bool AxioRequest_parseJSON(AxioRequest* request) {
     if (strcmp(request->contentType, "application/json") != 0) {
         return false;
@@ -172,7 +178,7 @@ bool AxioRequest_parseJSON(AxioRequest* request) {
     return request->json != NULL;
 }
 
-bool parseRequest(AxioRequest *request, char *buf) {
+bool parseRequest(AxioRequest *request, char *buf, MemoryPool *queryPool) {
     if (!request) {
         return false;
     }
@@ -194,7 +200,7 @@ bool parseRequest(AxioRequest *request, char *buf) {
     
     _extract_queryString(request);
 
-    if (!_parse_query_params(request)) { // fills in request->queryParams
+    if (!_parse_query_params(request, queryPool)) { // fills in request->queryParams
         return false;
     }
 
@@ -204,7 +210,7 @@ bool parseRequest(AxioRequest *request, char *buf) {
     return true;
 }
 
-void initResponse(AxioResponse *resp, const char* body, int status, AxioHeader* headers, int headerCount) {
+void initResponse(AxioResponse *resp, const char* body, int status, AxioHeader* headers, int headerCount, MemoryPool *responsePool) {
     size_t bodyLen = body ? strlen(body) : 0;
     
     // compute size manually 
@@ -225,14 +231,15 @@ void initResponse(AxioResponse *resp, const char* body, int status, AxioHeader* 
     needed += bodyLen;
     needed += 1; // null terminator
     
-    if (needed == 0) {
+    if (needed == 0 || needed >= 16384) {
         resp->response = NULL;
         resp->status = 500;
         resp->len = 0;
         return;
     }
     
-    char *response = malloc(needed);
+    char *response = poolAlloc(responsePool);
+
     if (!response) {
         resp->response = NULL;
         resp->status = 500;
@@ -320,7 +327,7 @@ void initResponse(AxioResponse *resp, const char* body, int status, AxioHeader* 
 }
 
 
-void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount) {
+void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount, MemoryPool *responsePool) {
     AxioHeader h[headerAmount + 1];
 
     for (int i = 0; i < headerAmount; i++) {
@@ -331,5 +338,5 @@ void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHe
     char* value = "text/html";
     h[headerAmount] = (AxioHeader){key, value, strlen(key), strlen(value)};
 
-    initResponse(resp, body, status, h, headerAmount);
+    initResponse(resp, body, status, h, headerAmount, responsePool);
 }

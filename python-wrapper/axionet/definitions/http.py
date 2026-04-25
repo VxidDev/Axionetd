@@ -10,6 +10,24 @@ class AxioResponse(ctypes.Structure):
 class AxioRoute(ctypes.Structure):
     pass
 
+class PoolNode(ctypes.Structure):
+    pass  # forward declaration for self-reference
+
+PoolNode._fields_ = [
+    ("next", ctypes.POINTER(PoolNode))
+]
+
+class MemoryPool(ctypes.Structure):
+    _fields_ = [
+        ("memory", ctypes.c_void_p),
+        ("freeList", ctypes.POINTER(PoolNode)),
+        ("objectSize", ctypes.c_ulong),
+        ("capacity", ctypes.c_ulong),
+
+        # pthread_mutex_t (opaque)
+        ("lock", ctypes.c_byte * 64),
+    ]
+
 class AxioHeader(ctypes.Structure):
     _fields_ = [
         ("key", ctypes.c_char_p),
@@ -21,7 +39,8 @@ class AxioHeader(ctypes.Structure):
 HANDLER_CALLBACK = ctypes.CFUNCTYPE(
     None,
     ctypes.POINTER(AxioRequest),
-    ctypes.POINTER(AxioResponse)
+    ctypes.POINTER(AxioResponse),
+    ctypes.POINTER(MemoryPool)
 )
 
 YYJSON_DOC_PTR = ctypes.c_void_p

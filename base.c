@@ -1,6 +1,7 @@
 #include "include/axionetd.h"
 #include "include/http.h"
 // #include "include/json.h"
+#include "include/memory-pool.h"
 #include "include/router.h"
 
 #include <stdbool.h>
@@ -8,7 +9,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-void root(AxioRequest* request, AxioResponse* response) {
+void root(AxioRequest* request, AxioResponse* response, MemoryPool* responsePool) {
     /*
     char resp[128];
 
@@ -29,12 +30,12 @@ void root(AxioRequest* request, AxioResponse* response) {
     }
     */
 
-    HTMLResponse(response, "<h1>Hello, World!</h1>", 200, NULL, 0);
+    HTMLResponse(response, "<h1>Hello, World!</h1>", 200, NULL, 0, responsePool);
 }
 
-void diffPath(AxioRequest* request, AxioResponse* response) {
+void diffPath(AxioRequest* request, AxioResponse* response, MemoryPool *responsePool) {
     sleep(5);
-    HTMLResponse(response, "<h1>Done!</h1>", 200, NULL, 0);
+    HTMLResponse(response, "<h1>Done!</h1>", 200, NULL, 0, responsePool);
 }
 
 int main(void) {

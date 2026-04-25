@@ -2,7 +2,7 @@ import ctypes
 
 from .lib import _lib
 
-from .definitions.http import HANDLER_CALLBACK, AxioRoute, AxioHeader, AxioResponse, AxioRequest
+from .definitions.http import HANDLER_CALLBACK, AxioRoute, AxioHeader, AxioResponse, AxioRequest, MemoryPool
 from .definitions.server import Axionet
 from .definitions.constants import AXIO_MAX_HEADERS, AXIO_MAX_METHODS, AXIO_MAX_METHOD, AXIO_MAX_PATH
 
@@ -42,7 +42,8 @@ _lib.initResponse.argtypes = [
     ctypes.c_char_p,
     ctypes.c_int,
     ctypes.POINTER(AxioHeader),
-    ctypes.c_int
+    ctypes.c_int,
+    ctypes.POINTER(MemoryPool)
 ]
 _lib.initResponse.restype = None
 
@@ -68,8 +69,8 @@ class AxionetInstance:
 
     def route(self, path: str, methods: list[str], threaded: bool = False):
         def decorator(func: callable):
-            def wrapper(req, resp):
-                result = func(req, resp)
+            def wrapper(req, resp, mempool):
+                result = func(req, resp, mempool)
 
                 if isinstance(result, tuple):
                     length = len(result)
@@ -78,9 +79,9 @@ class AxionetInstance:
                     status_code = result[1] if length > 1 else 200
                     headers = result[2] if length > 2 else []
 
-                    return self.init_response(resp, body, status_code, headers)
+                    return self.init_response(resp, body, status_code, headers, mempool)
 
-                return self.init_response(resp, result, 200, [])
+                return self.init_response(resp, result, 200, [], mempool)
 
             self.add_route(path, methods, wrapper, threaded)
 
@@ -99,9 +100,9 @@ class AxionetInstance:
 
         # Bridge C -> Python
         @HANDLER_CALLBACK
-        def c_handler(c_request_ptr, c_response_ptr):
+        def c_handler(c_request_ptr, c_response_ptr, c_memory_pool_ptr):
             try:
-                handler_func(c_request_ptr, c_response_ptr)
+                handler_func(c_request_ptr, c_response_ptr, c_memory_pool_ptr)
             except Exception as e:
                 print(f"[Handler Error] {str(e)}")
 
@@ -123,7 +124,7 @@ class AxionetInstance:
         return result
 
     @staticmethod
-    def init_response(resp_ptr, body: str, status: int, headers=None):
+    def init_response(resp_ptr, body: str, status: int, headers: list | None, mempool: MemoryPool):
         c_body = body.encode('utf-8')
 
         c_headers_array = None
@@ -147,7 +148,8 @@ class AxionetInstance:
             c_body,
             status,
             c_headers_array if c_headers_array else None,
-            header_count
+            header_count,
+            mempool
         )
 
 # --- Helper for safe string decoding ---

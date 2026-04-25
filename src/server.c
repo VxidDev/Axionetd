@@ -5,6 +5,7 @@
 #include "../include/router.h"
 #include "../include/defaultRoutes.h"
 #include "../include/threading.h"
+#include "../include/memory-pool.h"
 
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -28,6 +29,11 @@ Axionet* globalServer = NULL;
 int globalEpollFd = -1;
 bool enableLogging = true;
 bool useThreading;
+
+MemoryPool *connPool;
+MemoryPool *bufferPool;
+MemoryPool *queryPool;
+MemoryPool *responsePool;
 
 AxioJobQueue jobQueue;
 
@@ -59,9 +65,13 @@ void closeConnection(int epollFd, AxioConnection *conn) {
     epoll_ctl(epollFd, EPOLL_CTL_DEL, conn->fd, NULL);
     close(conn->fd);
 
-    if (conn->response) free(conn->response);
-    if (conn->readBuffer) free(conn->readBuffer);
-    free(conn);
+    if (conn->response) poolFree(responsePool, conn->response);
+
+    if (conn->readBuffer) {
+        poolFree(bufferPool, conn->readBuffer);
+    }
+
+    poolFree(connPool, conn);
 }
 
 void pushJob(AxioJob job) {
@@ -109,19 +119,19 @@ void* workerThread(void *arg) {
             if (strcmp(job.request.path, globalServer->routes[j]->path) == 0) {
 
                 if (!isMethodAllowed(globalServer->routes[j], job.request.method)) {
-                    route405(&response);
+                    route405(&response, responsePool);
                     handled = true;
                     break;
                 }
 
-                globalServer->routes[j]->handler(&job.request, &response);
+                globalServer->routes[j]->handler(&job.request, &response, responsePool);
                 handled = true;
                 break;
             }
         }
 
         if (!handled || !response.response) {
-            route404(&response);
+            route404(&response, responsePool);
         }
 
         if (enableLogging) {
@@ -232,6 +242,11 @@ void stopServer(int sig) {
 void startServer(Axionet* server) {
     globalServer = server;
 
+    connPool = poolCreate(sizeof(AxioConnection), 10000);
+    bufferPool = poolCreate(8192, 10000);
+    queryPool = poolCreate(sizeof(AxioQueryParam) * AXIO_MAX_QUERY_PARAMS, 10000);
+    responsePool = poolCreate(16384, 10000);
+
     // init queue
     if (useThreading) {
         pthread_mutex_init(&jobQueue.mutex, NULL);
@@ -285,8 +300,15 @@ void startServer(Axionet* server) {
 
                     if (clientFd < 0) break;
 
-                    AxioConnection *conn = malloc(sizeof(AxioConnection));
+                    AxioConnection *conn = poolAlloc(connPool);
+
+                    if (!conn) {
+                        close(clientFd);
+                        continue;
+                    }
+
                     memset(conn, 0, sizeof(*conn));
+
                     conn->fd = clientFd;
                     conn->state = AXIO_READING;
 
@@ -307,16 +329,15 @@ void startServer(Axionet* server) {
             }
 
             if (conn->state == AXIO_READING && (events[i].events & EPOLLIN)) {
+                size_t size = 8192, total = 0;
+                char *buf = poolAlloc(bufferPool);
 
-                size_t size = 4096, total = 0;
-                char *buf = malloc(size);
+                if (!buf) {
+                    closeConnection(globalEpollFd, conn);
+                    continue;
+                }
 
                 while (1) {
-                    if (total >= size - 1) {
-                        size *= 2;
-                        buf = realloc(buf, size);
-                    }
-
                     ssize_t r = read(conn->fd, buf + total, size - total - 1);
 
                     if (r <= 0) break;
@@ -331,9 +352,9 @@ void startServer(Axionet* server) {
 
                 AxioRequest req = {0};
 
-                if (!parseRequest(&req, buf)) {
+                if (!parseRequest(&req, buf, queryPool)) {
                     AxioResponse resp = {0};
-                    route400(&resp);
+                    route400(&resp, responsePool);
 
                     conn->response = resp.response;
                     conn->total = resp.len;
@@ -346,7 +367,7 @@ void startServer(Axionet* server) {
                         if (strcmp(req.path, server->routes[j]->path) == 0) {
                             if (!isMethodAllowed(server->routes[j], req.method)) {
                                 AxioResponse resp = {0};
-                                route405(&resp);
+                                route405(&resp, responsePool);
 
                                 conn->response = resp.response;
                                 conn->total = resp.len;
@@ -366,10 +387,10 @@ void startServer(Axionet* server) {
                                 // fallback inline
                                 AxioResponse resp = {0};
 
-                                server->routes[j]->handler(&req, &resp);
+                                server->routes[j]->handler(&req, &resp, responsePool);
 
                                 if (!resp.response) {
-                                    route404(&resp);
+                                    route404(&resp, responsePool);
                                 }
 
                                 conn->response = resp.response;
@@ -393,7 +414,7 @@ void startServer(Axionet* server) {
 
                     if (!handled) {
                         AxioResponse resp = {0};
-                        route404(&resp);
+                        route404(&resp, responsePool);
 
                         conn->response = resp.response;
                         conn->total = resp.len;
@@ -420,6 +441,12 @@ void startServer(Axionet* server) {
     free(server->routes);
     free(server->host);
     free(workers);
+
+    poolDestroy(bufferPool);
+    poolDestroy(connPool);
+    poolDestroy(queryPool);
+    poolDestroy(responsePool);
+
     close(server->fd);
     close(globalEpollFd);
 }

@@ -3,6 +3,7 @@
 
 #include "axionetd.h"
 #include "config.h"
+#include "memory-pool.h"
 #include <stdalign.h>
 #include <stdbool.h>
 #include <yyjson.h>
@@ -24,7 +25,7 @@ typedef struct AxioRequest {
     char method[AXIO_MAX_METHOD]; // Method e.g "GET"
 
     char *queryString;
-    AxioQueryParam queryParams[AXIO_MAX_QUERY_PARAMS];
+    AxioQueryParam *queryParams;
     int queryParamAmount;
 
     AxioHeader headers[AXIO_MAX_HEADERS]; // Populated after calling AxioRequest_getHeaders
@@ -55,8 +56,8 @@ typedef struct AxioConnection {
 } AxioConnection;
 
 bool AxioRequest_parseJSON(AxioRequest* request);
-bool parseRequest(AxioRequest* request, char *buf);
-void initResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerCount);
-void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount);
+bool parseRequest(AxioRequest* request, char *buf, MemoryPool *queryPool);
+void initResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerCount, MemoryPool *responsePool);
+void HTMLResponse(AxioResponse* resp, const char* body, const int status, AxioHeader* headers, int headerAmount, MemoryPool *responsePool);
 
 #endif // AXIONETD_REQUEST_H

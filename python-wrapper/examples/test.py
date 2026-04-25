@@ -4,7 +4,7 @@ server = AxionetInstance("127.0.0.1", 8080, 10, 4, True)
 server.init_server()
 
 @server.route("/", ["GET"])
-def root(req, resp):
+def root(req, resp, memory_pool):
     path = cstr_to_py(req.contents.path)
     method = cstr_to_py(req.contents.method)
 
