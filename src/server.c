@@ -148,6 +148,15 @@ void* workerThread(void *arg) {
         job.conn->sent = 0;
         job.conn->state = AXIO_WRITING;
 
+        if (enableLogging) {
+            printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
+                job.request.method,
+                job.request.path,
+                response.status,
+                statusCodeToText(response.status)
+            );
+        }
+
         struct epoll_event ev = {0};
         ev.events = EPOLLOUT | EPOLLET;
         ev.data.ptr = job.conn;
@@ -242,10 +251,10 @@ void stopServer(int sig) {
 void startServer(Axionet* server) {
     globalServer = server;
 
-    connPool = poolCreate(sizeof(AxioConnection), 10000);
-    bufferPool = poolCreate(8192, 10000);
-    queryPool = poolCreate(sizeof(AxioQueryParam) * AXIO_MAX_QUERY_PARAMS, 10000);
-    responsePool = poolCreate(16384, 10000);
+    connPool = poolCreate(sizeof(AxioConnection), AXIO_MEMORY_POOL_SIZE);
+    bufferPool = poolCreate(8192, AXIO_MEMORY_POOL_SIZE);
+    queryPool = poolCreate(sizeof(AxioQueryParam) * AXIO_MAX_QUERY_PARAMS, AXIO_MEMORY_POOL_SIZE);
+    responsePool = poolCreate(16384, AXIO_MEMORY_POOL_SIZE);
 
     // init queue
     if (useThreading) {
@@ -358,8 +367,12 @@ void startServer(Axionet* server) {
 
                     conn->response = resp.response;
                     conn->total = resp.len;
+                    conn->sent = 0;
                     conn->state = AXIO_WRITING;
 
+                    if (enableLogging) {
+                        printf("\033[1;31mERROR:\033[33m Malformed request. \033[0m\n");
+                    }
                 } else {
                     bool handled = false;
 
@@ -391,6 +404,15 @@ void startServer(Axionet* server) {
 
                                 if (!resp.response) {
                                     route404(&resp, responsePool);
+                                }
+
+                                if (enableLogging) {
+                                    printf("\033[1;35m%s\033[37m - \033[36m%s %d %s\033[0m\n",
+                                        req.method,
+                                        req.path,
+                                        resp.status,
+                                        statusCodeToText(resp.status)
+                                    );
                                 }
 
                                 conn->response = resp.response;

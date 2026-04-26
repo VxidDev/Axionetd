@@ -12,4 +12,6 @@
 
 #define AXIO_JOB_QUEUE_SIZE 1024
 
+#define AXIO_MEMORY_POOL_SIZE 1500
+
 #endif // AXIO_CONFIG_H
