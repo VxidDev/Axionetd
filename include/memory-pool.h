@@ -13,7 +13,7 @@ typedef struct {
     unsigned long objectSize;
     unsigned long capacity;
 
-    pthread_mutex_t lock; // optional (needed for multithreading)
+    pthread_mutex_t lock;
 } MemoryPool;
 
 MemoryPool* poolCreate(size_t objectSize, size_t capacity);
